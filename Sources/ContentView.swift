@@ -20,6 +20,7 @@ private func timeText(_ seconds: Double) -> String {
 struct ContentView: View {
     @EnvironmentObject private var model: Model
     @State private var dragFraction: Double?
+    @State private var showNowPlaying = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -34,6 +35,11 @@ struct ContentView: View {
         .background(bg.ignoresSafeArea())
         .foregroundColor(fg)
         .preferredColorScheme(.dark)
+        .fullScreenCover(isPresented: $showNowPlaying) {
+            NowPlayingView()
+                .environmentObject(model)
+                .preferredColorScheme(.dark)
+        }
     }
 
     private var header: some View {
@@ -188,6 +194,15 @@ struct ContentView: View {
     }
 
     private var artwork: some View {
+        Button {
+            showNowPlaying = true
+        } label: {
+            artworkContent
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var artworkContent: some View {
         Group {
             if let image = model.artwork {
                 Image(uiImage: image)
