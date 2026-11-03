@@ -21,7 +21,8 @@ final class Cache {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     }
 
-    private let extensions = ["m4a", "mp3", "ogg", "audio"]
+    private let extensions = ["m4a", "mp3", "ogg"]
+    private let allExtensions = ["m4a", "mp3", "ogg", "audio"]
 
     func hit(_ id: Int) -> URL? {
         for ext in extensions {
@@ -33,7 +34,7 @@ final class Cache {
     }
 
     func remove(_ id: Int) {
-        for ext in extensions {
+        for ext in allExtensions {
             try? FileManager.default.removeItem(at: dir.appendingPathComponent("\(id).\(ext)"))
         }
     }
