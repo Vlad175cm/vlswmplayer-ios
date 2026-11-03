@@ -33,6 +33,7 @@ final class Model: ObservableObject {
     private var failStreak = 0
     private var playStartedAt = Date()
     private var loggedStart = false
+    private var loggedStall = false
 
     init() {
         let stored = UserDefaults.standard.object(forKey: "volume") as? Double
@@ -44,6 +45,10 @@ final class Model: ObservableObject {
             if duration > 0 { self.duration = duration }
             self.playing = self.player.isPlaying
             if position > 1 { self.failStreak = 0 }
+            if !self.loggedStall, Date().timeIntervalSince(self.playStartedAt) > 2.5, position < 0.1 {
+                self.loggedStall = true
+                Log.write("stall id=\(self.current?.id ?? -1) cached=\(self.cached) status=\(self.player.itemStatus)")
+            }
             if position > 0.4, !self.loggedStart {
                 self.loggedStart = true
                 let ms = Int(Date().timeIntervalSince(self.playStartedAt) * 1000)
@@ -62,7 +67,7 @@ final class Model: ObservableObject {
         }
         player.setVolume(Float(volume))
         likes = Self.loadLikes()
-        Log.write("app start build=0.1.3 likes=\(likes.count)")
+        Log.write("app start build=0.1.4 likes=\(likes.count)")
     }
 
     var visible: [Track] {
@@ -146,6 +151,7 @@ final class Model: ObservableObject {
         current = track
         playStartedAt = Date()
         loggedStart = false
+        loggedStall = false
         status = "LOADING"
         artwork = nil
         position = 0

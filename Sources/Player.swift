@@ -77,6 +77,15 @@ final class Player {
         player.timeControlStatus == .playing
     }
 
+    var itemStatus: String {
+        guard let item = player.currentItem else { return "none" }
+        switch item.status {
+        case .readyToPlay: return "ready"
+        case .failed: return "failed(\(item.error?.localizedDescription ?? "?"))"
+        default: return "unknown"
+        }
+    }
+
     func seek(_ seconds: Double) {
         player.seek(to: CMTime(seconds: max(0, seconds), preferredTimescale: 600))
     }

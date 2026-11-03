@@ -21,15 +21,33 @@ final class Cache {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     }
 
+    private let extensions = ["m4a", "mp3", "ogg", "audio"]
+
     func hit(_ id: Int) -> URL? {
-        let url = dir.appendingPathComponent("\(id).audio")
-        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-        guard size > 1024 else { return nil }
-        return url
+        for ext in extensions {
+            let url = dir.appendingPathComponent("\(id).\(ext)")
+            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            if size > 1024 { return url }
+        }
+        return nil
     }
 
     func remove(_ id: Int) {
-        try? FileManager.default.removeItem(at: dir.appendingPathComponent("\(id).audio"))
+        for ext in extensions {
+            try? FileManager.default.removeItem(at: dir.appendingPathComponent("\(id).\(ext)"))
+        }
+    }
+
+    private func fileExtension(for url: URL) -> String {
+        guard let handle = try? FileHandle(forReadingFrom: url),
+              let head = try? handle.read(upToCount: 16),
+              head.count >= 8 else { return "m4a" }
+        try? handle.close()
+        if head[4..<8].elementsEqual(Array("ftyp".utf8)) { return "m4a" }
+        if head.starts(with: [0x49, 0x44, 0x33]) { return "mp3" }
+        if head.starts(with: [0x4F, 0x67, 0x67, 0x53]) { return "ogg" }
+        if head.count > 1, head[0] == 0xFF, (head[1] & 0xE0) == 0xE0 { return "mp3" }
+        return "m4a"
     }
 
     func clear() {
@@ -60,7 +78,6 @@ final class Cache {
             lock.lock(); busy.remove(id); lock.unlock()
         }
 
-        let target = dir.appendingPathComponent("\(id).audio")
         let part = dir.appendingPathComponent("\(id).part")
         try? FileManager.default.removeItem(at: part)
 
@@ -91,9 +108,11 @@ final class Cache {
                 try? FileManager.default.removeItem(at: part)
                 return false
             }
-            try? FileManager.default.removeItem(at: target)
+            let ext = fileExtension(for: part)
+            let target = dir.appendingPathComponent("\(id).\(ext)")
+            remove(id)
             try FileManager.default.moveItem(at: part, to: target)
-            Log.write("cache ok \(id) bytes=\(size)")
+            Log.write("cache ok \(id) bytes=\(size) ext=\(ext)")
             return true
         } catch {
             try? FileManager.default.removeItem(at: part)
