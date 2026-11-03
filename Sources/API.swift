@@ -175,26 +175,37 @@ final class SoundCloudAPI {
         return track
     }
 
-    private func pick(_ media: [Transcoding]) -> Transcoding? {
+    private func ordered(_ media: [Transcoding]) -> [Transcoding] {
+        var result: [Transcoding] = []
         for preset in ["aac_160k", "abr_sq", "aac_96k"] {
-            if let hit = media.first(where: { $0.preset == preset }) { return hit }
+            result += media.filter { $0.preset == preset && !result.contains($0) }
         }
-        return media.first
+        result += media.filter { candidate in !result.contains(candidate) }
+        return result
     }
 
     func streamURL(for track: Track) async throws -> URL {
         Log.write("resolve \(track.id) media=\(track.media.count)")
-        guard let transcoding = pick(track.media) else { throw APIError.unavailable }
-        var comps = URLComponents(string: transcoding.url)!
-        comps.queryItems = [
-            URLQueryItem(name: "client_id", value: clientID),
-            URLQueryItem(name: "track_authorization", value: track.authorization)
-        ]
-        let data = try await request(comps.url!)
-        struct Stream: Decodable { let url: String }
-        let stream = try JSONDecoder().decode(Stream.self, from: data)
-        guard let url = URL(string: stream.url) else { throw APIError.unavailable }
-        return url
+        guard !track.media.isEmpty else { throw APIError.unavailable }
+        var lastError: Error = APIError.unavailable
+        for transcoding in ordered(track.media) {
+            do {
+                var comps = URLComponents(string: transcoding.url)!
+                comps.queryItems = [
+                    URLQueryItem(name: "client_id", value: clientID),
+                    URLQueryItem(name: "track_authorization", value: track.authorization)
+                ]
+                let data = try await request(comps.url!)
+                struct Stream: Decodable { let url: String }
+                let stream = try JSONDecoder().decode(Stream.self, from: data)
+                guard let url = URL(string: stream.url) else { throw APIError.unavailable }
+                return url
+            } catch {
+                lastError = error
+                Log.write("transcoding \(transcoding.preset) failed: \(error.localizedDescription)")
+            }
+        }
+        throw lastError
     }
 
     func refreshClientID() async throws -> String {

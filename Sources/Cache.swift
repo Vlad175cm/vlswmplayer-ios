@@ -23,8 +23,9 @@ final class Cache {
 
     func hit(_ id: Int) -> URL? {
         let url = dir.appendingPathComponent("\(id).audio")
-        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
-        return size > 0 ? url : nil
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        guard size > 1024 else { return nil }
+        return url
     }
 
     func remove(_ id: Int) {
@@ -66,11 +67,25 @@ final class Cache {
         do {
             let hls = await isHLS(url)
             Log.write("cache start \(id) hls=\(hls)")
-            if hls {
-                try await downloadHLS(from: url, to: part)
-            } else {
-                try await downloadFile(from: url, to: part)
+            var succeeded = false
+            var lastError: Error = URLError(.unknown)
+            for attempt in 0..<2 {
+                do {
+                    try? FileManager.default.removeItem(at: part)
+                    if hls {
+                        try await downloadHLS(from: url, to: part)
+                    } else {
+                        try await downloadFile(from: url, to: part)
+                    }
+                    succeeded = true
+                    break
+                } catch {
+                    lastError = error
+                    Log.write("cache retry \(id) attempt=\(attempt): \(error.localizedDescription)")
+                    try? await Task.sleep(nanoseconds: 800_000_000)
+                }
             }
+            if !succeeded { throw lastError }
             let size = (try? FileManager.default.attributesOfItem(atPath: part.path)[.size] as? Int) ?? 0
             guard size > 1024 else {
                 try? FileManager.default.removeItem(at: part)
@@ -165,10 +180,19 @@ final class Cache {
     }
 
     private func data(_ url: URL) async throws -> Data {
-        let (data, response) = try await session.data(from: url)
-        if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
-            throw URLError(.badServerResponse)
+        var lastError: Error = URLError(.unknown)
+        for _ in 0..<2 {
+            do {
+                let (data, response) = try await session.data(from: url)
+                if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
+                    throw URLError(.badServerResponse)
+                }
+                return data
+            } catch {
+                lastError = error
+                try? await Task.sleep(nanoseconds: 300_000_000)
+            }
         }
-        return data
+        throw lastError
     }
 }

@@ -55,7 +55,7 @@ final class Model: ObservableObject {
         }
         player.setVolume(Float(volume))
         likes = Self.loadLikes()
-        Log.write("app start likes=\(likes.count)")
+        Log.write("app start build=0.1.2 likes=\(likes.count)")
     }
 
     var visible: [Track] {
@@ -190,7 +190,7 @@ final class Model: ObservableObject {
             return
         }
         failStreak += 1
-        if failStreak >= 3 {
+        if failStreak >= 2 {
             status = "TRACK UNAVAILABLE"
             player.stop()
             Log.write("giving up after \(failStreak) failures")

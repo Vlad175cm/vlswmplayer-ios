@@ -7,7 +7,7 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.1.0"
+    MARKETING_VERSION: "0.1.2"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
     CODE_SIGNING_ALLOWED: "NO"
@@ -31,7 +31,7 @@ targets:
       path: Sources/Info.plist
       properties:
         CFBundleDisplayName: vlswmplayer
-        CFBundleShortVersionString: "0.1.0"
+        CFBundleShortVersionString: "0.1.2"
         CFBundleVersion: "1"
         UILaunchScreen: {}
         UIUserInterfaceStyle: Dark
