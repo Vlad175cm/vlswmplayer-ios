@@ -5,9 +5,15 @@ final class Player {
     private let player = AVPlayer()
     private var observer: Any?
     private var endObserver: NSObjectProtocol?
+    private var failObserver: NSObjectProtocol?
 
-    var onEnd: (() -> Void)?
+    var onEnd: ((AVPlayerItem?) -> Void)?
+    var onFail: ((AVPlayerItem?) -> Void)?
     var onPosition: ((Double, Double) -> Void)?
+
+    var currentItem: AVPlayerItem? {
+        player.currentItem
+    }
 
     init() {
         let session = AVAudioSession.sharedInstance()
@@ -32,23 +38,31 @@ final class Player {
             forName: .AVPlayerItemDidPlayToEndTime,
             object: nil,
             queue: .main
-        ) { [weak self] _ in
-            self?.onEnd?()
+        ) { [weak self] note in
+            self?.onEnd?(note.object as? AVPlayerItem)
+        }
+
+        failObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemFailedToPlayToEndTime,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            self?.onFail?(note.object as? AVPlayerItem)
         }
     }
 
     deinit {
         if let observer { player.removeTimeObserver(observer) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
+        if let failObserver { NotificationCenter.default.removeObserver(failObserver) }
     }
 
-    func play(url: URL, startAt: Double = 0) {
+    func play(url: URL) {
         let item = AVPlayerItem(url: url)
+        item.preferredForwardBufferDuration = 5
         player.replaceCurrentItem(with: item)
-        if startAt > 0 {
-            player.seek(to: CMTime(seconds: startAt, preferredTimescale: 600))
-        }
         player.play()
+        Log.write("player.play \(url.absoluteString.prefix(90))")
     }
 
     func toggle() {

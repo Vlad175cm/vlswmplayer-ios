@@ -7,6 +7,14 @@ final class Cache {
     private let lock = NSLock()
     private var busy: Set<Int> = []
 
+    private lazy var session: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 20
+        config.timeoutIntervalForResource = 60
+        config.httpAdditionalHeaders = ["User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 15_8 like Mac OS X)"]
+        return URLSession(configuration: config)
+    }()
+
     init() {
         let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         dir = base.appendingPathComponent("tracks", isDirectory: true)
@@ -56,7 +64,9 @@ final class Cache {
         try? FileManager.default.removeItem(at: part)
 
         do {
-            if url.path.contains(".m3u8") || url.absoluteString.contains("m3u8") {
+            let hls = await isHLS(url)
+            Log.write("cache start \(id) hls=\(hls)")
+            if hls {
                 try await downloadHLS(from: url, to: part)
             } else {
                 try await downloadFile(from: url, to: part)
@@ -68,15 +78,29 @@ final class Cache {
             }
             try? FileManager.default.removeItem(at: target)
             try FileManager.default.moveItem(at: part, to: target)
+            Log.write("cache ok \(id) bytes=\(size)")
             return true
         } catch {
             try? FileManager.default.removeItem(at: part)
+            Log.write("cache fail \(id): \(error.localizedDescription)")
             return false
         }
     }
 
+    private func isHLS(_ url: URL) async -> Bool {
+        if url.absoluteString.contains("m3u8") { return true }
+        var req = URLRequest(url: url)
+        req.httpMethod = "HEAD"
+        if let (_, response) = try? await session.data(for: req),
+           let http = response as? HTTPURLResponse,
+           let type = http.value(forHTTPHeaderField: "Content-Type") {
+            return type.contains("mpegurl")
+        }
+        return false
+    }
+
     private func downloadFile(from url: URL, to target: URL) async throws {
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await session.data(from: url)
         if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
             throw URLError(.badServerResponse)
         }
@@ -136,12 +160,12 @@ final class Cache {
     }
 
     private func text(_ url: URL) async throws -> String {
-        let (data, _) = try await URLSession.shared.data(from: url)
+        let (data, _) = try await session.data(from: url)
         return String(decoding: data, as: UTF8.self)
     }
 
     private func data(_ url: URL) async throws -> Data {
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await session.data(from: url)
         if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
             throw URLError(.badServerResponse)
         }

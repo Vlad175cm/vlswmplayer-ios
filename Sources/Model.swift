@@ -21,6 +21,7 @@ final class Model: ObservableObject {
     @Published var duration: Double = 0
     @Published var playing = false
     @Published var volume: Double
+    @Published var cached = false
 
     private let api = SoundCloudAPI.shared
     private let cache = Cache.shared
@@ -29,6 +30,7 @@ final class Model: ObservableObject {
     private var playTask: Task<Void, Never>?
     private var artworkTask: Task<Void, Never>?
     private var playSerial = 0
+    private var failStreak = 0
 
     init() {
         let stored = UserDefaults.standard.object(forKey: "volume") as? Double
@@ -39,12 +41,21 @@ final class Model: ObservableObject {
             self.position = position
             if duration > 0 { self.duration = duration }
             self.playing = self.player.isPlaying
+            if position > 1 { self.failStreak = 0 }
         }
-        player.onEnd = { [weak self] in
-            self?.advance()
+        player.onEnd = { [weak self] item in
+            guard let self, let item, item === self.player.currentItem else { return }
+            Log.write("track ended id=\(self.current?.id ?? -1) pos=\(Int(self.position))")
+            self.finish(success: self.position > 1)
+        }
+        player.onFail = { [weak self] item in
+            guard let self, let item, item === self.player.currentItem else { return }
+            Log.write("track failed id=\(self.current?.id ?? -1)")
+            self.finish(success: false)
         }
         player.setVolume(Float(volume))
         likes = Self.loadLikes()
+        Log.write("app start likes=\(likes.count)")
     }
 
     var visible: [Track] {
@@ -56,7 +67,8 @@ final class Model: ObservableObject {
 
     var hint: String {
         if let status { return status }
-        return searching ? "SEARCHING" : ""
+        if searching { return "SEARCHING" }
+        return cached ? "CACHED" : ""
     }
 
     func setView(_ mode: ViewMode) {
@@ -75,10 +87,14 @@ final class Model: ObservableObject {
         scheduleSearch()
     }
 
+    private var trimmedQuery: String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private func scheduleSearch() {
         searchTask?.cancel()
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count >= 2 else {
+        let text = trimmedQuery
+        guard text.count >= 2 else {
             results = []
             searching = false
             return
@@ -86,21 +102,27 @@ final class Model: ObservableObject {
         searchTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 400_000_000)
             guard !Task.isCancelled, let self else { return }
-            await self.runSearch(trimmed)
+            await self.runSearch(text)
         }
     }
 
     private func runSearch(_ text: String) async {
         searching = true
-        status = nil
-        defer { searching = false }
+        defer {
+            if self.trimmedQuery == text { searching = false }
+        }
         do {
             let found = try await api.search(text)
+            guard !Task.isCancelled, trimmedQuery == text else { return }
             results = found
             selected = 0
+            status = nil
+            Log.write("search ok q=\(text) n=\(found.count)")
         } catch {
+            guard !Task.isCancelled, trimmedQuery == text else { return }
             results = []
             status = "NO CONNECTION"
+            Log.write("search error q=\(text): \(error.localizedDescription)")
         }
     }
 
@@ -119,17 +141,19 @@ final class Model: ObservableObject {
         artwork = nil
         position = 0
         duration = Double(track.duration)
+        cached = false
         loadArtwork(track)
+
+        if let file = cache.hit(track.id) {
+            cached = true
+            player.play(url: file)
+            status = nil
+            Log.write("play cached id=\(track.id)")
+            return
+        }
 
         playTask = Task { [weak self] in
             guard let self else { return }
-
-            if let file = self.cache.hit(track.id) {
-                self.player.play(url: file)
-                self.status = nil
-                return
-            }
-
             do {
                 let full = track.media.isEmpty ? try await self.api.track(id: track.id) : track
                 let url = try await self.api.streamURL(for: full)
@@ -141,16 +165,38 @@ final class Model: ObservableObject {
             } catch {
                 guard serial == self.playSerial else { return }
                 self.status = "TRACK UNAVAILABLE"
-                self.advance()
+                Log.write("resolve error id=\(track.id): \(error.localizedDescription)")
+                self.finish(success: false)
             }
         }
     }
 
     private func download(id: Int, url: URL) {
         guard cache.hit(id) == nil, !cache.isBusy(id) else { return }
-        Task.detached(priority: .utility) {
-            _ = await Cache.shared.download(id: id, from: url)
+        Task.detached(priority: .utility) { [weak self] in
+            let ok = await Cache.shared.download(id: id, from: url)
+            guard ok else { return }
+            await MainActor.run {
+                guard let self, self.current?.id == id else { return }
+                self.cached = true
+            }
         }
+    }
+
+    private func finish(success: Bool) {
+        if success {
+            failStreak = 0
+            advance()
+            return
+        }
+        failStreak += 1
+        if failStreak >= 3 {
+            status = "TRACK UNAVAILABLE"
+            player.stop()
+            Log.write("giving up after \(failStreak) failures")
+            return
+        }
+        advance()
     }
 
     private func loadArtwork(_ track: Track) {
@@ -191,6 +237,9 @@ final class Model: ObservableObject {
         if selected + 1 < visible.count {
             selected += 1
             play(visible[selected])
+        } else {
+            player.stop()
+            playing = false
         }
     }
 
@@ -230,10 +279,12 @@ final class Model: ObservableObject {
         if view == .likes {
             selected = min(selected, max(0, likes.count - 1))
         }
+        Log.write("like id=\(track.id) total=\(likes.count)")
     }
 
     func clearCache() {
         cache.clear()
+        cached = false
         status = "CACHE CLEARED"
     }
 

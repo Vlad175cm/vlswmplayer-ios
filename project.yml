@@ -24,6 +24,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: local.vlswm.vlswmplayer
         PRODUCT_NAME: VLSWMPlayer
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"
         INFOPLIST_KEY_MinimumOSVersion: "15.0"
     info:

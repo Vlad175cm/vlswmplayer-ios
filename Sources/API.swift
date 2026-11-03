@@ -93,11 +93,16 @@ final class SoundCloudAPI {
         return fallbackClientID
     }
 
+    private lazy var session: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 15
+        config.timeoutIntervalForResource = 30
+        config.httpAdditionalHeaders = ["User-Agent": userAgent]
+        return URLSession(configuration: config)
+    }()
+
     private func request(_ url: URL) async throws -> Data {
-        var req = URLRequest(url: url)
-        req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        req.timeoutInterval = 12
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await session.data(from: url)
         if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
             throw APIError.http(http.statusCode)
         }
@@ -108,8 +113,18 @@ final class SoundCloudAPI {
         do {
             return try await search(query, clientID: clientID)
         } catch {
-            guard let fresh = try? await refreshClientID() else { throw error }
-            return try await search(query, clientID: fresh)
+            if Task.isCancelled { throw error }
+            Log.write("search failed: \(error.localizedDescription)")
+            if let fresh = try? await refreshClientID() {
+                do {
+                    return try await search(query, clientID: fresh)
+                } catch {
+                    Log.write("search with fresh id failed: \(error.localizedDescription)")
+                    throw error
+                }
+            }
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            return try await search(query, clientID: clientID)
         }
     }
 
@@ -168,6 +183,7 @@ final class SoundCloudAPI {
     }
 
     func streamURL(for track: Track) async throws -> URL {
+        Log.write("resolve \(track.id) media=\(track.media.count)")
         guard let transcoding = pick(track.media) else { throw APIError.unavailable }
         var comps = URLComponents(string: transcoding.url)!
         comps.queryItems = [
@@ -185,15 +201,23 @@ final class SoundCloudAPI {
         let html = try await request(URL(string: "https://soundcloud.com/")!)
         let text = String(decoding: html, as: UTF8.self)
         let assets = matches(in: text, pattern: #"https://a-v2\.sndcdn\.com/assets/[A-Za-z0-9\-_]+\.js"#)
-        for asset in assets.prefix(6) {
+        for asset in assets.prefix(8) {
             guard let url = URL(string: asset),
                   let data = try? await request(url) else { continue }
             let js = String(decoding: data, as: UTF8.self)
-            if let id = matches(in: js, pattern: #"client_id:\s*"([a-zA-Z0-9]{32})""#).first {
-                UserDefaults.standard.set(id, forKey: "client_id")
-                return id
+            let patterns = [
+                #"client_id:\s*"([a-zA-Z0-9]{32})""#,
+                #"client_id=([a-zA-Z0-9]{32})"#
+            ]
+            for pattern in patterns {
+                if let id = matches(in: js, pattern: pattern).first {
+                    UserDefaults.standard.set(id, forKey: "client_id")
+                    Log.write("client id refreshed")
+                    return id
+                }
             }
         }
+        Log.write("client id refresh failed, assets=\(assets.count)")
         throw APIError.noClientID
     }
 
