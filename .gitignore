@@ -1,0 +1,4 @@
+build/
+*.ipa
+DerivedData/
+.DS_Store

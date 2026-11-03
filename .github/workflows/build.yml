@@ -1,0 +1,53 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  ipa:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: brew install xcodegen ldid
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project VLSWMPlayer.xcodeproj \
+            -scheme VLSWMPlayer \
+            -configuration Release \
+            -sdk iphoneos \
+            -arch arm64 \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            build | tail -40
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+          APP=build/Build/Products/Release-iphoneos/VLSWMPlayer.app
+          test -d "$APP"
+          rm -rf Payload VLSWMPlayer.ipa
+          mkdir Payload
+          cp -R "$APP" Payload/
+          ldid -S"$PWD/entitlements.plist" Payload/VLSWMPlayer.app/VLSWMPlayer
+          zip -qry VLSWMPlayer.ipa Payload
+          ls -lh VLSWMPlayer.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VLSWMPlayer-ipa
+          path: VLSWMPlayer.ipa
+          if-no-files-found: error

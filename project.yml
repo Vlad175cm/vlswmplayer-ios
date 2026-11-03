@@ -1,0 +1,46 @@
+name: VLSWMPlayer
+options:
+  bundleIdPrefix: local.vlswm
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    CODE_SIGNING_ALLOWED: "NO"
+    CODE_SIGNING_REQUIRED: "NO"
+    CODE_SIGN_IDENTITY: ""
+
+targets:
+  VLSWMPlayer:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: local.vlswm.vlswmplayer
+        PRODUCT_NAME: VLSWMPlayer
+        TARGETED_DEVICE_FAMILY: "1"
+        INFOPLIST_KEY_MinimumOSVersion: "15.0"
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: vlswmplayer
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UIUserInterfaceStyle: Dark
+        UIRequiredDeviceCapabilities:
+          - arm64
+        UIBackgroundModes:
+          - audio
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIApplicationSupportsIndirectInputEvents: true
+        UIAppFonts:
+          - JetBrainsMonoNerdFont-Regular.ttf
+        ITSAppUsesNonExemptEncryption: false
