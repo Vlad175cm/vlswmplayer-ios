@@ -31,6 +31,8 @@ final class Model: ObservableObject {
     private var artworkTask: Task<Void, Never>?
     private var playSerial = 0
     private var failStreak = 0
+    private var playStartedAt = Date()
+    private var loggedStart = false
 
     init() {
         let stored = UserDefaults.standard.object(forKey: "volume") as? Double
@@ -42,6 +44,11 @@ final class Model: ObservableObject {
             if duration > 0 { self.duration = duration }
             self.playing = self.player.isPlaying
             if position > 1 { self.failStreak = 0 }
+            if position > 0.4, !self.loggedStart {
+                self.loggedStart = true
+                let ms = Int(Date().timeIntervalSince(self.playStartedAt) * 1000)
+                Log.write("started id=\(self.current?.id ?? -1) after \(ms)ms cached=\(self.cached)")
+            }
         }
         player.onEnd = { [weak self] item in
             guard let self, let item, item === self.player.currentItem else { return }
@@ -55,7 +62,7 @@ final class Model: ObservableObject {
         }
         player.setVolume(Float(volume))
         likes = Self.loadLikes()
-        Log.write("app start build=0.1.2 likes=\(likes.count)")
+        Log.write("app start build=0.1.3 likes=\(likes.count)")
     }
 
     var visible: [Track] {
@@ -137,6 +144,8 @@ final class Model: ObservableObject {
         playTask?.cancel()
 
         current = track
+        playStartedAt = Date()
+        loggedStart = false
         status = "LOADING"
         artwork = nil
         position = 0
@@ -236,6 +245,7 @@ final class Model: ObservableObject {
         guard !visible.isEmpty else { return }
         if selected + 1 < visible.count {
             selected += 1
+            Log.write("advance to index=\(selected) id=\(visible[selected].id)")
             play(visible[selected])
         } else {
             player.stop()
@@ -246,12 +256,14 @@ final class Model: ObservableObject {
     func goBack() {
         guard !visible.isEmpty, selected > 0 else { return }
         selected -= 1
+        Log.write("back to index=\(selected) id=\(visible[selected].id)")
         play(visible[selected])
     }
 
     func select(_ index: Int) {
         guard index < visible.count else { return }
         selected = index
+        Log.write("tap index=\(index) id=\(visible[index].id) view=\(view)")
         play(visible[index])
     }
 
