@@ -36,13 +36,11 @@ No third-party libraries: SwiftUI and AVPlayer.
 TrollStore installs unsigned IPAs permanently: no Apple ID, no certificate,
 no 7-day expiry. Open the `.ipa` in TrollStore and tap Install.
 
-Compatibility: iOS 14.0–15.4.1 on arm64 devices, up to 16.6.1 (and 17.0 on
-arm64e). Check the TrollStore documentation for your exact model and version.
+This is how I install it on my own iPhone 7.
 
-### AppSync Unified (jailbreak, any iOS 15+)
+### AppSync Unified (jailbreak, alternative)
 
-If TrollStore does not support your firmware — for example iPhone 7 on
-iOS 15.8.7 — use AppSync Unified instead:
+If you prefer the classic route instead of TrollStore:
 
 1. Install **AppSync Unified** (rootless build) from Karen's Repo.
 2. Copy the `.ipa` to the device and open it in Filza, or from a terminal:
