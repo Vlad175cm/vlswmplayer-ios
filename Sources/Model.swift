@@ -34,6 +34,7 @@ final class Model: ObservableObject {
     private var playStartedAt = Date()
     private var loggedStart = false
     private var loggedStall = false
+    private var endHandled = false
 
     init() {
         let stored = UserDefaults.standard.object(forKey: "volume") as? Double
@@ -54,11 +55,13 @@ final class Model: ObservableObject {
                 let ms = Int(Date().timeIntervalSince(self.playStartedAt) * 1000)
                 Log.write("started id=\(self.current?.id ?? -1) after \(ms)ms cached=\(self.cached)")
             }
+            if self.duration > 1, position >= self.duration - 0.6 {
+                self.handleEnd(reason: "timer")
+            }
         }
         player.onEnd = { [weak self] item in
             guard let self, let item, item === self.player.currentItem else { return }
-            Log.write("track ended id=\(self.current?.id ?? -1) pos=\(Int(self.position))")
-            self.finish(success: self.position > 1)
+            self.handleEnd(reason: "notification")
         }
         player.onFail = { [weak self] item in
             guard let self, let item, item === self.player.currentItem else { return }
@@ -67,7 +70,7 @@ final class Model: ObservableObject {
         }
         player.setVolume(Float(volume))
         likes = Self.loadLikes()
-        Log.write("app start build=1.0.0 likes=\(likes.count)")
+        Log.write("app start build=1.0.1 likes=\(likes.count)")
     }
 
     var visible: [Track] {
@@ -152,6 +155,7 @@ final class Model: ObservableObject {
         playStartedAt = Date()
         loggedStart = false
         loggedStall = false
+        endHandled = false
         status = "LOADING"
         artwork = nil
         position = 0
@@ -196,6 +200,16 @@ final class Model: ObservableObject {
                 self.cached = true
             }
         }
+    }
+
+    private func handleEnd(reason: String) {
+        guard !endHandled else { return }
+        endHandled = true
+        Log.write(
+            "end \(reason) id=\(current?.id ?? -1) pos=\(Int(position)) dur=\(Int(duration)) "
+            + "next=\(selected + 1)/\(visible.count)"
+        )
+        finish(success: position > 1)
     }
 
     private func finish(success: Bool) {
@@ -256,6 +270,7 @@ final class Model: ObservableObject {
         } else {
             player.stop()
             playing = false
+            status = "END OF LIST"
         }
     }
 
