@@ -410,7 +410,7 @@ final class Model: ObservableObject {
             Log.write("interruption began, resume=\(resumeAfterInterruption)")
         case .ended:
             let options = (note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt)
-                .map(AVAudioSession.InterruptionOptions.init(rawValue:)) ?? []
+                .map { AVAudioSession.InterruptionOptions(rawValue: $0) } ?? []
             if options.contains(.shouldResume), resumeAfterInterruption {
                 resumeAfterInterruption = false
                 try? AVAudioSession.sharedInstance().setActive(true)
