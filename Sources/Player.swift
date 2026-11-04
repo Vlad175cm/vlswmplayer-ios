@@ -65,6 +65,14 @@ final class Player {
         Log.write("player.play \(url.absoluteString.prefix(90))")
     }
 
+    func play() {
+        player.play()
+    }
+
+    func pause() {
+        player.pause()
+    }
+
     func toggle() {
         if player.timeControlStatus == .playing {
             player.pause()

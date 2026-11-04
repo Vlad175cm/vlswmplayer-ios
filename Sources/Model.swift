@@ -1,4 +1,6 @@
+import AVFoundation
 import Foundation
+import MediaPlayer
 import UIKit
 
 @MainActor
@@ -35,6 +37,8 @@ final class Model: ObservableObject {
     private var loggedStart = false
     private var loggedStall = false
     private var endHandled = false
+    private var durationPublished = false
+    private var resumeAfterInterruption = false
 
     init() {
         let stored = UserDefaults.standard.object(forKey: "volume") as? Double
@@ -49,6 +53,10 @@ final class Model: ObservableObject {
             if !self.loggedStall, Date().timeIntervalSince(self.playStartedAt) > 2.5, position < 0.1 {
                 self.loggedStall = true
                 Log.write("stall id=\(self.current?.id ?? -1) cached=\(self.cached) status=\(self.player.itemStatus)")
+            }
+            if duration > 0, !self.durationPublished {
+                self.durationPublished = true
+                self.updateNowPlaying()
             }
             if position > 0.4, !self.loggedStart {
                 self.loggedStart = true
@@ -70,7 +78,9 @@ final class Model: ObservableObject {
         }
         player.setVolume(Float(volume))
         likes = Self.loadLikes()
-        Log.write("app start build=1.0.1 likes=\(likes.count)")
+        setupRemoteCommands()
+        setupSessionObservers()
+        Log.write("app start build=1.1.0 likes=\(likes.count)")
     }
 
     var visible: [Track] {
@@ -156,6 +166,7 @@ final class Model: ObservableObject {
         loggedStart = false
         loggedStall = false
         endHandled = false
+        durationPublished = false
         status = "LOADING"
         artwork = nil
         position = 0
@@ -168,6 +179,7 @@ final class Model: ObservableObject {
             player.play(url: file)
             status = nil
             Log.write("play cached id=\(track.id)")
+            updateNowPlaying()
             return
         }
 
@@ -180,6 +192,7 @@ final class Model: ObservableObject {
                 self.current = full
                 self.player.play(url: url)
                 self.status = nil
+                self.updateNowPlaying()
                 self.download(id: full.id, url: url)
             } catch {
                 guard serial == self.playSerial else { return }
@@ -222,6 +235,8 @@ final class Model: ObservableObject {
         if failStreak >= 2 {
             status = "TRACK UNAVAILABLE"
             player.stop()
+            playing = false
+            updateNowPlaying()
             Log.write("giving up after \(failStreak) failures")
             return
         }
@@ -235,11 +250,14 @@ final class Model: ObservableObject {
             guard let (data, _) = try? await URLSession.shared.data(from: url) else { return }
             guard !Task.isCancelled else { return }
             self?.artwork = UIImage(data: data)
+            self?.updateNowPlaying()
         }
     }
 
     func togglePlay() {
         player.toggle()
+        playing = player.isPlaying
+        updateNowPlaying()
     }
 
     func seek(by delta: Double) {
@@ -253,6 +271,7 @@ final class Model: ObservableObject {
         let target = duration * min(max(0, fraction), 1)
         player.seek(target)
         position = target
+        updateNowPlaying()
     }
 
     func setVolume(_ value: Double) {
@@ -263,20 +282,14 @@ final class Model: ObservableObject {
 
     func advance() {
         guard !visible.isEmpty else { return }
-        if selected + 1 < visible.count {
-            selected += 1
-            Log.write("advance to index=\(selected) id=\(visible[selected].id)")
-            play(visible[selected])
-        } else {
-            player.stop()
-            playing = false
-            status = "END OF LIST"
-        }
+        selected = (selected + 1) % visible.count
+        Log.write("advance to index=\(selected) id=\(visible[selected].id)")
+        play(visible[selected])
     }
 
     func goBack() {
-        guard !visible.isEmpty, selected > 0 else { return }
-        selected -= 1
+        guard !visible.isEmpty else { return }
+        selected = (selected - 1 + visible.count) % visible.count
         Log.write("back to index=\(selected) id=\(visible[selected].id)")
         play(visible[selected])
     }
@@ -319,6 +332,152 @@ final class Model: ObservableObject {
         cache.clear()
         cached = false
         status = "CACHE CLEARED"
+    }
+
+    // MARK: - system integration
+
+    private func setupRemoteCommands() {
+        let center = MPRemoteCommandCenter.shared()
+
+        _ = center.playCommand.addTarget { [weak self] _ in
+            Task { @MainActor in self?.remotePlay() }
+            return .success
+        }
+        _ = center.pauseCommand.addTarget { [weak self] _ in
+            Task { @MainActor in self?.remotePause() }
+            return .success
+        }
+        _ = center.togglePlayPauseCommand.addTarget { [weak self] _ in
+            Task { @MainActor in self?.remoteToggle() }
+            return .success
+        }
+        _ = center.nextTrackCommand.addTarget { [weak self] _ in
+            Task { @MainActor in self?.advance() }
+            return .success
+        }
+        _ = center.previousTrackCommand.addTarget { [weak self] _ in
+            Task { @MainActor in self?.goBack() }
+            return .success
+        }
+        _ = center.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard let event = event as? MPChangePlaybackPositionCommandEvent else {
+                return .commandFailed
+            }
+            Task { @MainActor in self?.seekTo(seconds: event.positionTime) }
+            return .success
+        }
+        _ = center.likeCommand.addTarget { [weak self] _ in
+            Task { @MainActor in self?.toggleLikeCurrent() }
+            return .success
+        }
+
+        center.playCommand.isEnabled = true
+        center.pauseCommand.isEnabled = true
+        center.togglePlayPauseCommand.isEnabled = true
+        center.nextTrackCommand.isEnabled = true
+        center.previousTrackCommand.isEnabled = true
+        center.changePlaybackPositionCommand.isEnabled = true
+        center.likeCommand.isEnabled = true
+    }
+
+    private func setupSessionObservers() {
+        let center = NotificationCenter.default
+        center.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            Task { @MainActor in self?.handleInterruption(note) }
+        }
+        center.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            Task { @MainActor in self?.handleRouteChange(note) }
+        }
+    }
+
+    private func handleInterruption(_ note: Notification) {
+        guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+        switch type {
+        case .began:
+            resumeAfterInterruption = playing
+            player.pause()
+            playing = false
+            updateNowPlaying()
+            Log.write("interruption began, resume=\(resumeAfterInterruption)")
+        case .ended:
+            let options = (note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt)
+                .map(AVAudioSession.InterruptionOptions.init(rawValue:)) ?? []
+            if options.contains(.shouldResume), resumeAfterInterruption {
+                resumeAfterInterruption = false
+                try? AVAudioSession.sharedInstance().setActive(true)
+                player.play()
+                playing = true
+                updateNowPlaying()
+                Log.write("interruption ended, resumed")
+            }
+        @unknown default:
+            break
+        }
+    }
+
+    private func handleRouteChange(_ note: Notification) {
+        guard let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: raw) else { return }
+        if reason == .oldDeviceUnavailable {
+            player.pause()
+            playing = false
+            updateNowPlaying()
+            Log.write("headphones disconnected, paused")
+        }
+    }
+
+    private func remotePlay() {
+        try? AVAudioSession.sharedInstance().setActive(true)
+        player.play()
+        playing = true
+        updateNowPlaying()
+    }
+
+    private func remotePause() {
+        player.pause()
+        playing = false
+        updateNowPlaying()
+    }
+
+    private func remoteToggle() {
+        player.toggle()
+        playing = player.isPlaying
+        updateNowPlaying()
+    }
+
+    func seekTo(seconds: Double) {
+        let target = min(max(0, seconds), duration > 0 ? duration : seconds)
+        player.seek(target)
+        position = target
+        updateNowPlaying()
+    }
+
+    private func updateNowPlaying() {
+        guard let track = current else {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            return
+        }
+        var info: [String: Any] = [
+            MPMediaItemPropertyTitle: track.title,
+            MPMediaItemPropertyArtist: track.artist,
+            MPMediaItemPropertyPlaybackDuration: duration > 0 ? duration : Double(track.duration),
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: position,
+            MPNowPlayingInfoPropertyPlaybackRate: playing ? 1.0 : 0.0,
+            MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue
+        ]
+        if let image = artwork {
+            info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 
     // MARK: - likes storage
