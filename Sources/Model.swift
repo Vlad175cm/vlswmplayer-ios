@@ -67,7 +67,7 @@ final class Model: ObservableObject {
         }
         player.setVolume(Float(volume))
         likes = Self.loadLikes()
-        Log.write("app start build=0.1.5 likes=\(likes.count)")
+        Log.write("app start build=1.0.0 likes=\(likes.count)")
     }
 
     var visible: [Track] {
