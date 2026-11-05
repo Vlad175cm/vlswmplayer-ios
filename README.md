@@ -20,6 +20,11 @@ No third-party libraries: SwiftUI and AVPlayer.
 - **Caches what you play.** The first play streams and downloads in the
   background; the next start comes from disk in about a second.
 - **Likes** in a separate tab, stored locally in `Documents/likes.json`.
+- **Local files** in an `UPLOADED` tab. Files are copied into the app sandbox,
+  title, artist and cover are read from the tags. OGG, Opus and WMA are skipped:
+  iOS cannot decode them.
+- **Portable library**: the hamburger menu exports and imports likes as one
+  JSON file, the same format the Linux version uses.
 - **Full screen player**: tap the artwork for cover, title, artist, length,
   seek bar and the like / previous / play / next buttons.
 - Skips DRM-protected tracks instead of hanging.
@@ -62,7 +67,10 @@ The app stops working after 7 days and has to be re-signed.
 - Drag the bar under the artwork — seek.
 - `VOL` — app volume.
 - `+` / `*` — like or unlike the current track.
-- `TAB` row: `SEARCH` / `LIKES`, the `*` marks liked tracks.
+- Tabs: `SEARCH` / `LIKES` / `UPLOADED`, the `*` marks liked tracks.
+- Hamburger menu: add local files, export likes, import likes.
+- While files are copied, `UPLOADING 2/5 name` and a progress bar appear above
+  the player panel.
 - Swipe down or `X` closes the full screen player.
 
 ## Files on the device
@@ -71,6 +79,9 @@ The app stops working after 7 days and has to be re-signed.
 | --- | --- |
 | `Documents/tracks/` | cached audio, one file per track |
 | `Documents/likes.json` | liked tracks |
+| `Documents/uploaded/` | your own audio files |
+| `Documents/uploaded.json` | index of uploaded files |
+| `Documents/artwork/` | covers extracted from local files |
 | `Documents/vlswmplayer.log` | debug log: search, resolve, playback, cache |
 
 The log is the first thing to check if something does not play. Find it with:
