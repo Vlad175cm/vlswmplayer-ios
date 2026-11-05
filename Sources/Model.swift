@@ -87,7 +87,7 @@ final class Model: ObservableObject {
         uploaded = LocalLibrary.load()
         setupRemoteCommands()
         setupSessionObservers()
-        Log.write("app start build=1.3.1 likes=\(likes.count)")
+        Log.write("app start build=1.3.2 likes=\(likes.count)")
     }
 
     var visible: [Track] {

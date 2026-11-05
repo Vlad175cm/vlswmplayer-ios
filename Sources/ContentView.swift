@@ -168,8 +168,13 @@ struct ContentView: View {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(model.visible.enumerated()), id: \.element.id) { index, track in
-                        row(index: index, track: track)
-                            .id(track.id)
+                        SwipeRow(
+                            enabled: model.view == .uploaded,
+                            onDelete: { model.deleteUploaded(track) }
+                        ) {
+                            row(index: index, track: track)
+                        }
+                        .id(track.id)
                     }
                 }
             }
@@ -205,21 +210,6 @@ struct ContentView: View {
             .foregroundColor(selected ? bg : fg)
         }
         .buttonStyle(.plain)
-        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            if model.view == .uploaded {
-                Button {
-                    model.deleteUploaded(track)
-                } label: {
-                    Text("DELETE")
-                        .font(mono(10))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 10)
-                        .frame(height: 32)
-                        .overlay(Rectangle().stroke(Color.white, lineWidth: 1))
-                }
-                .tint(.black)
-            }
-        }
     }
 
     private var uploadProgress: some View {
@@ -360,5 +350,65 @@ struct ContentView: View {
                 .overlay(Rectangle().stroke(fg, lineWidth: 1))
         }
         .buttonStyle(.plain)
+    }
+}
+
+
+private struct SwipeRow<Content: View>: View {
+    let enabled: Bool
+    let onDelete: () -> Void
+    let content: Content
+
+    @State private var offset: CGFloat = 0
+
+    private let width: CGFloat = 92
+
+    init(enabled: Bool, onDelete: @escaping () -> Void, @ViewBuilder content: () -> Content) {
+        self.enabled = enabled
+        self.onDelete = onDelete
+        self.content = content()
+    }
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            if enabled {
+                Button {
+                    offset = 0
+                    onDelete()
+                } label: {
+                    Text("DELETE")
+                        .font(.custom("JetBrainsMonoNF-Regular", size: 10))
+                        .foregroundColor(.white)
+                        .frame(width: width, height: 28)
+                        .background(Color.black)
+                        .overlay(Rectangle().stroke(Color.white, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .opacity(offset < -2 ? 1 : 0)
+            }
+
+            Group {
+                if enabled {
+                    content
+                        .background(Color.black)
+                        .offset(x: offset)
+                        .simultaneousGesture(drag)
+                } else {
+                    content
+                }
+            }
+        }
+        .clipped()
+    }
+
+    private var drag: some Gesture {
+        DragGesture(minimumDistance: 10)
+            .onChanged { value in
+                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                offset = min(0, max(-width, value.translation.width))
+            }
+            .onEnded { _ in
+                offset = offset < -width / 2 ? -width : 0
+            }
     }
 }
