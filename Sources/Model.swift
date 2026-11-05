@@ -87,7 +87,7 @@ final class Model: ObservableObject {
         uploaded = LocalLibrary.load()
         setupRemoteCommands()
         setupSessionObservers()
-        Log.write("app start build=1.2.0 likes=\(likes.count)")
+        Log.write("app start build=1.3.0 likes=\(likes.count)")
     }
 
     var visible: [Track] {
@@ -399,6 +399,21 @@ final class Model: ObservableObject {
         status = "IMPORTED \(added)"
         Log.write("import likes: \(added) of \(incoming.count)")
         return added
+    }
+
+    func deleteUploaded(_ track: Track) {
+        guard let local = uploaded.first(where: { $0.numericID == track.id }) else { return }
+        LocalLibrary.delete(local)
+        uploaded.removeAll { $0.id == local.id }
+        LocalLibrary.save(uploaded)
+        if current?.id == track.id {
+            player.stop()
+            playing = false
+            current = nil
+            updateNowPlaying()
+        }
+        status = "REMOVED"
+        Log.write("delete local \(local.id)")
     }
 
     func clearCache() {

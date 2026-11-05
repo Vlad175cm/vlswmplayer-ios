@@ -138,6 +138,13 @@ enum LocalLibrary {
         return added
     }
 
+    static func delete(_ track: LocalTrack) {
+        try? FileManager.default.removeItem(at: track.url)
+        if let art = track.artworkFile {
+            try? FileManager.default.removeItem(at: artworkDir.appendingPathComponent(art))
+        }
+    }
+
     static func sanitize(_ name: String) -> String {
         name.map { $0.isLetter || $0.isNumber ? $0 : "_" }.reduce(into: "") { $0.append($1) }
     }
