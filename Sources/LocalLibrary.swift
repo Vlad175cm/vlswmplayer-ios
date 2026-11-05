@@ -106,18 +106,16 @@ enum LocalLibrary {
             let duration = Int(asset.duration.seconds.rounded())
             let metadata = asset.commonMetadata
 
-            func value(_ key: AVMetadataKey) -> String? {
-                AVMetadataItem.metadataItems(from: metadata, withKey: key, keySpace: .common)
-                    .first?.stringValue
+            func item(_ key: AVMetadataKey) -> AVMetadataItem? {
+                metadata.first { $0.commonKey == key }
             }
 
-            let title = value(.commonKeyTitle) ?? source.deletingPathExtension().lastPathComponent
-            let artist = value(.commonKeyArtist) ?? "unknown"
+            let title = item(.commonKeyTitle)?.stringValue
+                ?? source.deletingPathExtension().lastPathComponent
+            let artist = item(.commonKeyArtist)?.stringValue ?? "unknown"
 
             var artworkName: String?
-            if let artworkData = AVMetadataItem
-                .metadataItems(from: metadata, withKey: .commonKeyArtwork, keySpace: .common)
-                .first?.dataValue {
+            if let artworkData = item(.commonKeyArtwork)?.dataValue {
                 let name = sanitize(base) + ".img"
                 let path = artworkDir.appendingPathComponent(name)
                 try? artworkData.write(to: path)
