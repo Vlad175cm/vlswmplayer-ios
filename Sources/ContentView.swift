@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 private let fg = Color.white
 private let bg = Color.black
@@ -21,6 +22,10 @@ struct ContentView: View {
     @EnvironmentObject private var model: Model
     @State private var dragFraction: Double?
     @State private var showNowPlaying = false
+    @State private var showAudioImporter = false
+    @State private var showLikesImporter = false
+    @State private var showLikesExporter = false
+    @State private var likesDocument = LikesFile(data: Data())
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,11 +35,38 @@ struct ContentView: View {
                 searchField
             }
             list
+            if model.uploadActive {
+                uploadProgress
+            }
             playerBar
         }
         .background(bg.ignoresSafeArea())
         .foregroundColor(fg)
         .preferredColorScheme(.dark)
+        .fileImporter(
+            isPresented: $showAudioImporter,
+            allowedContentTypes: audioTypes,
+            allowsMultipleSelection: true
+        ) { result in
+            if case .success(let urls) = result {
+                model.importLocalFiles(urls)
+            }
+        }
+        .fileImporter(isPresented: $showLikesImporter, allowedContentTypes: [.json]) { result in
+            if case .success(let url) = result {
+                let access = url.startAccessingSecurityScopedResource()
+                defer { if access { url.stopAccessingSecurityScopedResource() } }
+                if let data = try? Data(contentsOf: url) {
+                    model.importLikes(data: data)
+                }
+            }
+        }
+        .fileExporter(
+            isPresented: $showLikesExporter,
+            document: likesDocument,
+            contentType: .json,
+            defaultFilename: "vlswmplayer-likes"
+        ) { _ in }
         .fullScreenCover(isPresented: $showNowPlaying) {
             NowPlayingView()
                 .environmentObject(model)
@@ -42,11 +74,36 @@ struct ContentView: View {
         }
     }
 
+    private var audioTypes: [UTType] {
+        var types: [UTType] = [.audio, .mp3, .wav, .aiff]
+        for ext in ["flac", "m4a", "aac", "caf", "alac"] {
+            if let type = UTType(filenameExtension: ext) {
+                types.append(type)
+            }
+        }
+        return types
+    }
+
     private var header: some View {
-        HStack {
+        HStack(spacing: 10) {
             Text("VLSWM // PLAYER")
             Spacer()
-            Text(model.hint)
+            Text(model.hint).lineLimit(1)
+            Menu {
+                Button("ADD LOCAL FILES") { showAudioImporter = true }
+                Button("EXPORT LIKES") {
+                    likesDocument = LikesFile(data: model.likesDocumentData())
+                    showLikesExporter = true
+                }
+                Button("IMPORT LIKES") { showLikesImporter = true }
+            } label: {
+                VStack(spacing: 3) {
+                    ForEach(0..<3) { _ in
+                        Rectangle().frame(width: 16, height: 2)
+                    }
+                }
+                .frame(width: 26, height: 24)
+            }
         }
         .font(mono(10))
         .padding(.horizontal, 12)
@@ -58,6 +115,7 @@ struct ContentView: View {
         HStack(spacing: 0) {
             tab("SEARCH", active: model.view == .search) { model.setView(.search) }
             tab("LIKES", active: model.view == .likes) { model.setView(.likes) }
+            tab("UPLOADED", active: model.view == .uploaded) { model.setView(.uploaded) }
             Spacer()
         }
         .padding(.horizontal, 12)
@@ -147,6 +205,19 @@ struct ContentView: View {
             .foregroundColor(selected ? bg : fg)
         }
         .buttonStyle(.plain)
+    }
+
+    private var uploadProgress: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("UPLOADING \(model.uploadDone)/\(model.uploadTotal)  \(model.uploadLabel)")
+                .font(mono(8))
+                .lineLimit(1)
+            bar(fraction: model.uploadTotal > 0
+                ? Double(model.uploadDone) / Double(model.uploadTotal)
+                : 0) { _ in }
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
     }
 
     private var playerBar: some View {

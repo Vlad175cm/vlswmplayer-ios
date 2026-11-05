@@ -8,11 +8,17 @@ final class Model: ObservableObject {
     enum ViewMode {
         case search
         case likes
+        case uploaded
     }
 
     @Published var query = ""
     @Published var results: [Track] = []
     @Published var likes: [StoredTrack] = []
+    @Published var uploaded: [LocalTrack] = []
+    @Published var uploadActive = false
+    @Published var uploadDone = 0
+    @Published var uploadTotal = 0
+    @Published var uploadLabel = ""
     @Published var view: ViewMode = .search
     @Published var selected = 0
     @Published var current: Track?
@@ -78,15 +84,17 @@ final class Model: ObservableObject {
         }
         player.setVolume(Float(volume))
         likes = Self.loadLikes()
+        uploaded = LocalLibrary.load()
         setupRemoteCommands()
         setupSessionObservers()
-        Log.write("app start build=1.1.0 likes=\(likes.count)")
+        Log.write("app start build=1.2.0 likes=\(likes.count)")
     }
 
     var visible: [Track] {
         switch view {
         case .search: return results
         case .likes: return likes.map(\.track)
+        case .uploaded: return uploaded.map(\.track)
         }
     }
 
@@ -103,7 +111,11 @@ final class Model: ObservableObject {
     }
 
     func toggleView() {
-        setView(view == .search ? .likes : .search)
+        switch view {
+        case .search: setView(.likes)
+        case .likes: setView(.uploaded)
+        case .uploaded: setView(.search)
+        }
     }
 
     func setQuery(_ text: String) {
@@ -173,6 +185,14 @@ final class Model: ObservableObject {
         duration = Double(track.duration)
         cached = false
         loadArtwork(track)
+
+        if let local = track.localURL {
+            player.play(url: local)
+            status = nil
+            Log.write("play local \(track.id) \(local.lastPathComponent)")
+            updateNowPlaying()
+            return
+        }
 
         if let file = cache.hit(track.id) {
             cached = true
@@ -316,6 +336,7 @@ final class Model: ObservableObject {
     }
 
     private func toggleLike(_ track: Track) {
+        if track.localURL != nil { return }
         if let index = likes.firstIndex(where: { $0.id == track.id }) {
             likes.remove(at: index)
         } else {
@@ -326,6 +347,58 @@ final class Model: ObservableObject {
             selected = min(selected, max(0, likes.count - 1))
         }
         Log.write("like id=\(track.id) total=\(likes.count)")
+    }
+
+    func importLocalFiles(_ urls: [URL]) {
+        let existing = uploaded
+        uploadActive = true
+        uploadDone = 0
+        uploadTotal = urls.count
+        uploadLabel = ""
+        Log.write("import local files: \(urls.count)")
+
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let added = LocalLibrary.importFiles(urls, existing: existing) { done, total, name in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.uploadDone = done
+                    self.uploadTotal = total
+                    self.uploadLabel = name
+                }
+            }
+            await MainActor.run {
+                guard let self else { return }
+                self.uploaded.append(contentsOf: added)
+                LocalLibrary.save(self.uploaded)
+                self.uploadActive = false
+                self.uploadLabel = ""
+                self.status = added.isEmpty ? "NOTHING ADDED" : "ADDED \(added.count)"
+                Log.write("import local done, added=\(added.count)")
+                if !added.isEmpty {
+                    self.setView(.uploaded)
+                }
+            }
+        }
+    }
+
+    func likesDocumentData() -> Data {
+        LikesTransfer.encode(likes)
+    }
+
+    @discardableResult
+    func importLikes(data: Data) -> Int {
+        let incoming = LikesTransfer.decode(data)
+        var added = 0
+        for item in incoming where !likes.contains(where: { $0.id == item.id }) {
+            likes.append(item)
+            added += 1
+        }
+        if added > 0 {
+            Self.saveLikes(likes)
+        }
+        status = "IMPORTED \(added)"
+        Log.write("import likes: \(added) of \(incoming.count)")
+        return added
     }
 
     func clearCache() {

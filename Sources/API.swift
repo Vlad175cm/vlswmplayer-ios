@@ -15,6 +15,7 @@ struct Track: Identifiable, Equatable {
     var artwork: String?
     var media: [Transcoding]
     var authorization: String
+    var localURL: URL? = nil
 }
 
 struct StoredTrack: Codable, Equatable {
@@ -36,6 +37,15 @@ struct StoredTrack: Codable, Equatable {
             media: [],
             authorization: ""
         )
+    }
+
+    init(id: Int, title: String, artist: String, duration: Int, permalink: String, artwork: String?) {
+        self.id = id
+        self.title = title
+        self.artist = artist
+        self.duration = duration
+        self.permalink = permalink
+        self.artwork = artwork
     }
 
     init(_ track: Track) {
