@@ -205,6 +205,21 @@ struct ContentView: View {
             .foregroundColor(selected ? bg : fg)
         }
         .buttonStyle(.plain)
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            if model.view == .uploaded {
+                Button {
+                    model.deleteUploaded(track)
+                } label: {
+                    Text("DELETE")
+                        .font(mono(10))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .frame(height: 32)
+                        .overlay(Rectangle().stroke(Color.white, lineWidth: 1))
+                }
+                .tint(.black)
+            }
+        }
     }
 
     private var uploadProgress: some View {
