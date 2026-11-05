@@ -87,7 +87,7 @@ final class Model: ObservableObject {
         uploaded = LocalLibrary.load()
         setupRemoteCommands()
         setupSessionObservers()
-        Log.write("app start build=1.3.0 likes=\(likes.count)")
+        Log.write("app start build=1.3.1 likes=\(likes.count)")
     }
 
     var visible: [Track] {
@@ -357,8 +357,11 @@ final class Model: ObservableObject {
         uploadLabel = ""
         Log.write("import local files: \(urls.count)")
 
+        // Keep access to the picked documents alive while the copy runs in background.
+        let scoped = urls.map { ($0, $0.startAccessingSecurityScopedResource()) }
+
         Task.detached(priority: .userInitiated) { [weak self] in
-            let added = LocalLibrary.importFiles(urls, existing: existing) { done, total, name in
+            let result = LocalLibrary.importFiles(urls, existing: existing) { done, total, name in
                 Task { @MainActor in
                     guard let self else { return }
                     self.uploadDone = done
@@ -366,15 +369,26 @@ final class Model: ObservableObject {
                     self.uploadLabel = name
                 }
             }
+            for (url, access) in scoped where access {
+                url.stopAccessingSecurityScopedResource()
+            }
             await MainActor.run {
                 guard let self else { return }
-                self.uploaded.append(contentsOf: added)
+                self.uploaded.append(contentsOf: result.added)
                 LocalLibrary.save(self.uploaded)
                 self.uploadActive = false
                 self.uploadLabel = ""
-                self.status = added.isEmpty ? "NOTHING ADDED" : "ADDED \(added.count)"
-                Log.write("import local done, added=\(added.count)")
-                if !added.isEmpty {
+                if result.added.isEmpty {
+                    self.status = result.skipped > 0
+                        ? "NOTHING ADDED (\(result.skipped) SKIPPED)"
+                        : "NOTHING ADDED"
+                } else {
+                    self.status = "ADDED \(result.added.count)"
+                }
+                Log.write(
+                    "import local done, added=\(result.added.count) skipped=\(result.skipped)"
+                )
+                if !result.added.isEmpty {
                     self.setView(.uploaded)
                 }
             }

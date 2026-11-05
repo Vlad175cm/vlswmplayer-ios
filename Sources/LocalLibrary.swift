@@ -82,23 +82,32 @@ enum LocalLibrary {
         _ urls: [URL],
         existing: [LocalTrack],
         progress: @escaping (Int, Int, String) -> Void
-    ) -> [LocalTrack] {
+    ) -> (added: [LocalTrack], skipped: Int) {
         let usable = urls.filter(isSupported)
+        Log.write("import: \(urls.count) picked, \(usable.count) supported")
         var names = Set(existing.map(\.id))
         var added: [LocalTrack] = []
+        var skipped = 0
 
         for (index, source) in usable.enumerated() {
             progress(index, usable.count, source.lastPathComponent)
             let base = source.lastPathComponent
-            guard !names.contains(base) else { continue }
+            guard !names.contains(base) else {
+                skipped += 1
+                continue
+            }
 
             let destination = uploadedDir.appendingPathComponent(base)
             if FileManager.default.fileExists(atPath: destination.path) {
                 try? FileManager.default.removeItem(at: destination)
             }
+            let access = source.startAccessingSecurityScopedResource()
+            defer { if access { source.stopAccessingSecurityScopedResource() } }
             do {
                 try FileManager.default.copyItem(at: source, to: destination)
             } catch {
+                skipped += 1
+                Log.write("import skip \(base): \(error.localizedDescription)")
                 continue
             }
 
@@ -135,7 +144,8 @@ enum LocalLibrary {
         }
 
         progress(usable.count, usable.count, "")
-        return added
+        Log.write("import done: added=\(added.count) skipped=\(skipped)")
+        return (added, skipped)
     }
 
     static func delete(_ track: LocalTrack) {
