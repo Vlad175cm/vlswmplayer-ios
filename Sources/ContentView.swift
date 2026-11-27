@@ -20,7 +20,6 @@ private func timeText(_ seconds: Double) -> String {
 
 struct ContentView: View {
     @EnvironmentObject private var model: Model
-    @State private var dragFraction: Double?
     @State private var showNowPlaying = false
     @State private var showLikesImporter = false
     @State private var showLikesExporter = false
@@ -324,28 +323,7 @@ struct ContentView: View {
     }
 
     private func bar(fraction: Double, onDrag: @escaping (Double) -> Void) -> some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                bg
-                Rectangle().frame(width: geo.size.width * CGFloat(min(max(fraction, 0), 1)))
-                    .foregroundColor(fg)
-                Rectangle().stroke(fg, lineWidth: 1)
-            }
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        let raw = value.location.x / max(1, geo.size.width)
-                        dragFraction = min(max(raw, 0), 1)
-                    }
-                    .onEnded { value in
-                        let raw = value.location.x / max(1, geo.size.width)
-                        onDrag(min(max(raw, 0), 1))
-                        dragFraction = nil
-                    }
-            )
-        }
-        .frame(height: 12)
+        Bar(fraction: fraction, onDrag: onDrag)
     }
 
     private var controls: some View {
@@ -372,5 +350,37 @@ struct ContentView: View {
                 .overlay(Rectangle().stroke(fg, lineWidth: 1))
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct Bar: View {
+    let fraction: Double
+    let onDrag: (Double) -> Void
+    @State private var dragFraction: Double?
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                bg
+                Rectangle()
+                    .frame(width: geo.size.width * CGFloat(min(max(dragFraction ?? fraction, 0), 1)))
+                    .foregroundColor(fg)
+                Rectangle().stroke(fg, lineWidth: 1)
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        let raw = value.location.x / max(1, geo.size.width)
+                        dragFraction = min(max(raw, 0), 1)
+                    }
+                    .onEnded { value in
+                        let raw = value.location.x / max(1, geo.size.width)
+                        onDrag(min(max(raw, 0), 1))
+                        dragFraction = nil
+                    }
+            )
+        }
+        .frame(height: 12)
     }
 }
