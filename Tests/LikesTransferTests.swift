@@ -28,8 +28,8 @@ final class LikesTransferTests: XCTestCase {
         let decoded = LikesTransfer.decode(LikesTransfer.encode(items))
         XCTAssertEqual(decoded.count, 2)
         XCTAssertEqual(decoded[0].id, 1)
-        XCTAssertEqual(decoded[0].genre, "Ambient")
-        XCTAssertEqual(decoded[0].tags, "chill")
+        XCTAssertEqual(decoded[0].genre ?? "", "Ambient")
+        XCTAssertEqual(decoded[0].tags ?? "", "chill")
         XCTAssertEqual(decoded[1].genre ?? "", "")
         XCTAssertEqual(decoded[1].tags ?? "", "")
     }
