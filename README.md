@@ -7,7 +7,7 @@ Hi, I'm **Vlad175cm**. This is the iOS port of my desktop player
 [VLSWM](https://github.com/Vlad175cm/VLSWM) — a minimal black-and-white
 Wayland shell.
 
-Same idea on the phone: search SoundCloud without an account, tap a track,
+Same idea on my phone: search SoundCloud without an account, tap a track,
 listen. Only black and white, only square corners, one monospace font.
 No third-party libraries: SwiftUI and AVPlayer.
 
@@ -15,10 +15,11 @@ No third-party libraries: SwiftUI and AVPlayer.
 
 ## What it does
 
-- **ZEN** — a personal SoundCloud wave built from your likes. Liked tracks are
-  grouped into broad genres, similar tracks come from SoundCloud's related
-  endpoint and genre search, tracks never repeat, and the same artist stays out
-  of the last ten tracks.
+- **ZEN** — my personal SoundCloud wave, built from the tracks I like. I group
+  them into broad genres, pull similar tracks through SoundCloud's related
+  endpoint and genre search, never repeat a track, and keep the same artist out
+  of the last ten tracks. It is my attempt at a Yandex Music "My Wave" for
+  SoundCloud.
 - **Search** SoundCloud through the public `api-v2` endpoint, no login.
 - **Plays HLS directly** with `AVPlayer`, no download before playback.
 - **Caches what you play.** The first play streams and downloads in the
@@ -28,7 +29,10 @@ No third-party libraries: SwiftUI and AVPlayer.
   JSON file, the same format the Linux version uses.
 - **Full screen player**: tap the artwork for cover, title, artist, length,
   seek bar and the like / previous / play / next buttons.
+- **CLEAR CACHE** in the hamburger menu.
 - Skips DRM-protected tracks instead of hanging.
+
+I removed the local-file uploader: the app is SoundCloud-only now.
 
 ## Requirements
 
