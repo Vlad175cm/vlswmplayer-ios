@@ -1,6 +1,6 @@
 import Foundation
 
-enum Genre: String, CaseIterable, Codable {
+enum Genre: String, CaseIterable, Codable, Hashable {
     case hipHop
     case electronic
     case hardstyle
