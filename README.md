@@ -15,14 +15,15 @@ No third-party libraries: SwiftUI and AVPlayer.
 
 ## What it does
 
+- **ZEN** — a personal SoundCloud wave built from your likes. Liked tracks are
+  grouped into broad genres, similar tracks come from SoundCloud's related
+  endpoint and genre search, tracks never repeat, and the same artist stays out
+  of the last ten tracks.
 - **Search** SoundCloud through the public `api-v2` endpoint, no login.
 - **Plays HLS directly** with `AVPlayer`, no download before playback.
 - **Caches what you play.** The first play streams and downloads in the
   background; the next start comes from disk in about a second.
 - **Likes** in a separate tab, stored locally in `Documents/likes.json`.
-- **Local files** in an `UPLOADED` tab. Files are copied into the app sandbox,
-  title, artist and cover are read from the tags. OGG, Opus and WMA are skipped:
-  iOS cannot decode them.
 - **Portable library**: the hamburger menu exports and imports likes as one
   JSON file, the same format the Linux version uses.
 - **Full screen player**: tap the artwork for cover, title, artist, length,
@@ -32,7 +33,7 @@ No third-party libraries: SwiftUI and AVPlayer.
 ## Requirements
 
 - iOS 15 or newer, arm64 device
-- Built with Xcode 16 / iOS 17 SDK, deployment target iOS 15
+- Built with Xcode 16 / iOS 18 SDK, deployment target iOS 15
 
 ## Install
 
@@ -62,15 +63,13 @@ The app stops working after 7 days and has to be re-signed.
 
 - Tap a row — play that track.
 - Tap the artwork in the player bar — full screen player.
-- `|<` / `>|` — previous / next track.
+- `|<` / `>|` — previous / next track; in ZEN, next skips the current track.
 - Middle button — pause and resume.
 - Drag the bar under the artwork — seek.
 - `VOL` — app volume.
-- `+` / `*` — like or unlike the current track.
-- Tabs: `SEARCH` / `LIKES` / `UPLOADED`, the `*` marks liked tracks.
-- Hamburger menu: add local files, export likes, import likes.
-- While files are copied, `UPLOADING 2/5 name` and a progress bar appear above
-  the player panel.
+- `+` / `*` — like or unlike the current track; in ZEN, likes boost its genre.
+- Tabs: `ZEN` / `SEARCH` / `LIKES`, the `*` marks liked tracks.
+- Hamburger menu: export likes, import likes, clear cache.
 - Swipe down or `X` closes the full screen player.
 
 ## Files on the device
@@ -79,9 +78,6 @@ The app stops working after 7 days and has to be re-signed.
 | --- | --- |
 | `Documents/tracks/` | cached audio, one file per track |
 | `Documents/likes.json` | liked tracks |
-| `Documents/uploaded/` | your own audio files |
-| `Documents/uploaded.json` | index of uploaded files |
-| `Documents/artwork/` | covers extracted from local files |
 | `Documents/vlswmplayer.log` | debug log: search, resolve, playback, cache |
 
 The log is the first thing to check if something does not play. Find it with:
@@ -95,13 +91,21 @@ find /var/mobile/Containers/Data/Application -name vlswmplayer.log 2>/dev/null
 - Search: `GET https://api-v2.soundcloud.com/search/tracks` with a `client_id`
   baked into the bundle. On `401` the app reloads `soundcloud.com`, extracts a
   fresh id from the JavaScript bundle and retries.
+- ZEN: likes are hydrated in batches (`/tracks?ids=`), grouped into HIP-HOP /
+  ELECTRONIC / HARDSTYLE / AMBIENT / ROCK / POP / OTHER, and used as seeds for
+  `/tracks/{id}/related` and genre search. Candidates are filtered by media,
+  duration, played ids and the last ten artists. The queue holds 20 tracks and
+  refills below five. A like boosts the genre, a skip excludes the track and
+  lowers the genre.
 - Playback: a `media.transcodings` entry is resolved into a direct HLS URL and
   handed to `AVPlayer`. `*-encrypted-hls` tracks are filtered out at search time.
 - Cache: the same resolved URL is downloaded in the background into
   `Documents/tracks/<id>.<ext>`, the extension is chosen from the file header
   (`ftyp` → `.m4a`, `ID3` → `.mp3`, `OggS` → `.ogg`). HLS is stored as one
-  concatenated file.
-- Likes: plain JSON, no account, nothing is sent anywhere.
+  concatenated file. A file that fails or stalls is evicted and retried once
+  from the network.
+- Likes: plain JSON, no account, nothing is sent anywhere. `genre` and `tags`
+  are optional fields, so old files keep working.
 
 ## Build
 

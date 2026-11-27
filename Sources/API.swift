@@ -10,12 +10,14 @@ struct Track: Identifiable, Equatable {
     let id: Int
     var title: String
     var artist: String
+    var artistKey: String
     var duration: Int
     var permalink: String
     var artwork: String?
+    var genre: String
+    var tags: String
     var media: [Transcoding]
     var authorization: String
-    var localURL: URL? = nil
 }
 
 struct StoredTrack: Codable, Equatable {
@@ -25,27 +27,43 @@ struct StoredTrack: Codable, Equatable {
     var duration: Int
     var permalink: String
     var artwork: String?
+    var genre: String?
+    var tags: String?
 
     var track: Track {
         Track(
             id: id,
             title: title,
             artist: artist,
+            artistKey: artist,
             duration: duration,
             permalink: permalink,
             artwork: artwork,
+            genre: genre ?? "",
+            tags: tags ?? "",
             media: [],
             authorization: ""
         )
     }
 
-    init(id: Int, title: String, artist: String, duration: Int, permalink: String, artwork: String?) {
+    init(
+        id: Int,
+        title: String,
+        artist: String,
+        duration: Int,
+        permalink: String,
+        artwork: String?,
+        genre: String? = nil,
+        tags: String? = nil
+    ) {
         self.id = id
         self.title = title
         self.artist = artist
         self.duration = duration
         self.permalink = permalink
         self.artwork = artwork
+        self.genre = genre
+        self.tags = tags
     }
 
     init(_ track: Track) {
@@ -55,6 +73,8 @@ struct StoredTrack: Codable, Equatable {
         duration = track.duration
         permalink = track.permalink
         artwork = track.artwork
+        genre = track.genre
+        tags = track.tags
     }
 }
 
@@ -84,6 +104,13 @@ private struct APITrack: Decodable {
     let user: APIUser?
     let media: APIMedia?
     let track_authorization: String?
+    let genre: String?
+    let tag_list: String?
+    let publisher_metadata: APIPublisher?
+}
+
+private struct APIPublisher: Decodable {
+    let artist: String?
 }
 
 private struct SearchResponse: Decodable {
@@ -120,37 +147,95 @@ final class SoundCloudAPI {
     }
 
     func search(_ query: String) async throws -> [Track] {
+        try await search(query, limit: 10)
+    }
+
+    func search(_ query: String, limit: Int) async throws -> [Track] {
         do {
-            return try await search(query, clientID: clientID)
+            return try await search(query, clientID: clientID, limit: limit)
         } catch {
             if Task.isCancelled { throw error }
             Log.write("search failed: \(error.localizedDescription)")
             if let fresh = try? await refreshClientID() {
                 do {
-                    return try await search(query, clientID: fresh)
+                    return try await search(query, clientID: fresh, limit: limit)
                 } catch {
                     Log.write("search with fresh id failed: \(error.localizedDescription)")
                     throw error
                 }
             }
             try? await Task.sleep(nanoseconds: 500_000_000)
-            return try await search(query, clientID: clientID)
+            return try await search(query, clientID: clientID, limit: limit)
         }
     }
 
-    private func search(_ query: String, clientID: String) async throws -> [Track] {
+    private func search(_ query: String, clientID: String, limit: Int) async throws -> [Track] {
         var comps = URLComponents(string: "https://api-v2.soundcloud.com/search/tracks")!
         comps.queryItems = [
             URLQueryItem(name: "q", value: query),
             URLQueryItem(name: "client_id", value: clientID),
-            URLQueryItem(name: "limit", value: "10")
+            URLQueryItem(name: "limit", value: String(limit))
         ]
         let data = try await request(comps.url!)
         let decoded = try JSONDecoder().decode(SearchResponse.self, from: data)
-        return (decoded.collection ?? []).compactMap(map)
+        return (decoded.collection ?? []).compactMap { map($0) }
     }
 
-    private func map(_ item: APITrack) -> Track? {
+    func tracks(ids: [Int]) async throws -> [Track] {
+        do {
+            return try await tracks(ids: ids, clientID: clientID)
+        } catch {
+            if Task.isCancelled { throw error }
+            if let fresh = try? await refreshClientID() {
+                return try await tracks(ids: ids, clientID: fresh)
+            }
+            throw error
+        }
+    }
+
+    private func tracks(ids: [Int], clientID: String) async throws -> [Track] {
+        var out: [Track] = []
+        var start = 0
+        while start < ids.count {
+            let end = min(start + 50, ids.count)
+            let chunk = ids[start..<end].map(String.init).joined(separator: ",")
+            var comps = URLComponents(string: "https://api-v2.soundcloud.com/tracks")!
+            comps.queryItems = [
+                URLQueryItem(name: "ids", value: chunk),
+                URLQueryItem(name: "client_id", value: clientID)
+            ]
+            let data = try await request(comps.url!)
+            let decoded = try JSONDecoder().decode([APITrack].self, from: data)
+            out += decoded.compactMap { map($0, requireMedia: false) }
+            start = end
+        }
+        return out
+    }
+
+    func related(to id: Int, limit: Int = 20) async throws -> [Track] {
+        do {
+            return try await related(to: id, limit: limit, clientID: clientID)
+        } catch {
+            if Task.isCancelled { throw error }
+            if let fresh = try? await refreshClientID() {
+                return try await related(to: id, limit: limit, clientID: fresh)
+            }
+            throw error
+        }
+    }
+
+    private func related(to id: Int, limit: Int, clientID: String) async throws -> [Track] {
+        var comps = URLComponents(string: "https://api-v2.soundcloud.com/tracks/\(id)/related")!
+        comps.queryItems = [
+            URLQueryItem(name: "client_id", value: clientID),
+            URLQueryItem(name: "limit", value: String(limit))
+        ]
+        let data = try await request(comps.url!)
+        let decoded = try JSONDecoder().decode(SearchResponse.self, from: data)
+        return (decoded.collection ?? []).compactMap { map($0) }
+    }
+
+    private func map(_ item: APITrack, requireMedia: Bool = true) -> Track? {
         guard let id = item.id else { return nil }
         let media = (item.media?.transcodings ?? []).compactMap { t -> Transcoding? in
             guard let url = t.url else { return nil }
@@ -158,17 +243,40 @@ final class SoundCloudAPI {
             if proto.contains("encrypted") { return nil }
             return Transcoding(url: url, preset: t.preset ?? "", proto: proto)
         }
-        if media.isEmpty { return nil }
+        if requireMedia && media.isEmpty { return nil }
+        let title = item.title ?? "untitled"
+        let artist = item.user?.username ?? "unknown"
+        let publisher = clean(item.publisher_metadata?.artist)
+        let artistKey = publisher ?? artistFromTitle(title) ?? artist
         return Track(
             id: id,
-            title: item.title ?? "untitled",
-            artist: item.user?.username ?? "unknown",
+            title: title,
+            artist: artist,
+            artistKey: artistKey,
             duration: Int(((item.duration ?? 0) / 1000).rounded()),
             permalink: item.permalink_url ?? "",
             artwork: item.artwork_url.map(bigArtwork),
+            genre: item.genre ?? "",
+            tags: item.tag_list ?? "",
             media: media,
             authorization: item.track_authorization ?? ""
         )
+    }
+
+    private func clean(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else { return nil }
+        return value
+    }
+
+    private func artistFromTitle(_ title: String) -> String? {
+        for separator in [" - ", " – ", " — "] {
+            guard let range = title.range(of: separator) else { continue }
+            let artist = String(title[..<range.lowerBound])
+                .trimmingCharacters(in: .whitespaces)
+            if artist.count >= 2 && artist.count <= 40 { return artist }
+        }
+        return nil
     }
 
     private func bigArtwork(_ url: String) -> String {
@@ -222,7 +330,7 @@ final class SoundCloudAPI {
         let html = try await request(URL(string: "https://soundcloud.com/")!)
         let text = String(decoding: html, as: UTF8.self)
         let assets = matches(in: text, pattern: #"https://a-v2\.sndcdn\.com/assets/[A-Za-z0-9\-_]+\.js"#)
-        for asset in assets.prefix(8) {
+        for asset in assets.prefix(12) {
             guard let url = URL(string: asset),
                   let data = try? await request(url) else { continue }
             let js = String(decoding: data, as: UTF8.self)

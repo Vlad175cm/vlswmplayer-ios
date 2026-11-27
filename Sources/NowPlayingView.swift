@@ -97,7 +97,7 @@ struct NowPlayingView: View {
             button(liked ? "*" : "+") { model.toggleLikeCurrent() }
             button("|<") { model.goBack() }
             button(model.playing ? "||" : ">", filled: true) { model.togglePlay() }
-            button(">|") { model.advance() }
+            button(">|") { model.skip() }
         }
     }
 

@@ -6,20 +6,16 @@ import UIKit
 @MainActor
 final class Model: ObservableObject {
     enum ViewMode {
+        case zen
         case search
         case likes
-        case uploaded
     }
 
     @Published var query = ""
     @Published var results: [Track] = []
     @Published var likes: [StoredTrack] = []
-    @Published var uploaded: [LocalTrack] = []
-    @Published var uploadActive = false
-    @Published var uploadDone = 0
-    @Published var uploadTotal = 0
-    @Published var uploadLabel = ""
-    @Published var view: ViewMode = .search
+    @Published var view: ViewMode = .zen
+    @Published var source: ViewMode = .search
     @Published var selected = 0
     @Published var current: Track?
     @Published var status: String?
@@ -30,6 +26,7 @@ final class Model: ObservableObject {
     @Published var playing = false
     @Published var volume: Double
     @Published var cached = false
+    @Published var zen = ZenState()
 
     private let api = SoundCloudAPI.shared
     private let cache = Cache.shared
@@ -37,6 +34,7 @@ final class Model: ObservableObject {
     private var searchTask: Task<Void, Never>?
     private var playTask: Task<Void, Never>?
     private var artworkTask: Task<Void, Never>?
+    private var zenTask: Task<Void, Never>?
     private var playSerial = 0
     private var failStreak = 0
     private var playStartedAt = Date()
@@ -45,6 +43,9 @@ final class Model: ObservableObject {
     private var endHandled = false
     private var durationPublished = false
     private var resumeAfterInterruption = false
+    private var cacheRetryID: Int?
+    private var zenWaiting = false
+    private var zenGeneration = 0
 
     init() {
         let stored = UserDefaults.standard.object(forKey: "volume") as? Double
@@ -55,10 +56,22 @@ final class Model: ObservableObject {
             self.position = position
             if duration > 0 { self.duration = duration }
             self.playing = self.player.isPlaying
-            if position > 1 { self.failStreak = 0 }
+            if position > 1 {
+                self.failStreak = 0
+                self.cacheRetryID = nil
+            }
             if !self.loggedStall, Date().timeIntervalSince(self.playStartedAt) > 2.5, position < 0.1 {
                 self.loggedStall = true
                 Log.write("stall id=\(self.current?.id ?? -1) cached=\(self.cached) status=\(self.player.itemStatus)")
+            }
+            if self.cached, let track = self.current, self.cacheRetryID != track.id,
+               Date().timeIntervalSince(self.playStartedAt) > 6, position < 0.1 {
+                self.cacheRetryID = track.id
+                self.cached = false
+                self.cache.remove(track.id)
+                Log.write("cached stall, dropping cache id=\(track.id)")
+                self.play(track)
+                return
             }
             if duration > 0, !self.durationPublished {
                 self.durationPublished = true
@@ -69,7 +82,7 @@ final class Model: ObservableObject {
                 let ms = Int(Date().timeIntervalSince(self.playStartedAt) * 1000)
                 Log.write("started id=\(self.current?.id ?? -1) after \(ms)ms cached=\(self.cached)")
             }
-            if self.duration > 1, position >= self.duration - 0.6 {
+            if self.playing, self.duration > 1, position >= self.duration - 0.6 {
                 self.handleEnd(reason: "timer")
             }
         }
@@ -83,23 +96,24 @@ final class Model: ObservableObject {
             self.finish(success: false)
         }
         player.setVolume(Float(volume))
+        Self.removeLegacyLocalFiles()
         likes = Self.loadLikes()
-        uploaded = LocalLibrary.load()
         setupRemoteCommands()
         setupSessionObservers()
-        Log.write("app start build=1.3.2 likes=\(likes.count)")
+        Log.write("app start build=1.4.0 likes=\(likes.count)")
     }
 
     var visible: [Track] {
         switch view {
+        case .zen: return zen.queue
         case .search: return results
         case .likes: return likes.map(\.track)
-        case .uploaded: return uploaded.map(\.track)
         }
     }
 
     var hint: String {
         if let status { return status }
+        if zen.loading { return "TUNING" }
         if searching { return "SEARCHING" }
         return cached ? "CACHED" : ""
     }
@@ -112,9 +126,9 @@ final class Model: ObservableObject {
 
     func toggleView() {
         switch view {
+        case .zen: setView(.search)
         case .search: setView(.likes)
-        case .likes: setView(.uploaded)
-        case .uploaded: setView(.search)
+        case .likes: setView(.zen)
         }
     }
 
@@ -165,6 +179,8 @@ final class Model: ObservableObject {
 
     func playSelected() {
         guard selected < visible.count else { return }
+        source = view
+        cacheRetryID = nil
         play(visible[selected])
     }
 
@@ -185,14 +201,6 @@ final class Model: ObservableObject {
         duration = Double(track.duration)
         cached = false
         loadArtwork(track)
-
-        if let local = track.localURL {
-            player.play(url: local)
-            status = nil
-            Log.write("play local \(track.id) \(local.lastPathComponent)")
-            updateNowPlaying()
-            return
-        }
 
         if let file = cache.hit(track.id) {
             cached = true
@@ -248,11 +256,23 @@ final class Model: ObservableObject {
     private func finish(success: Bool) {
         if success {
             failStreak = 0
-            advance()
+            if source == .zen {
+                advanceZen(skipped: false)
+            } else {
+                advance()
+            }
+            return
+        }
+        if cached, let track = current, cacheRetryID != track.id {
+            cacheRetryID = track.id
+            cached = false
+            cache.remove(track.id)
+            Log.write("cached failure, retry stream id=\(track.id)")
+            play(track)
             return
         }
         failStreak += 1
-        if failStreak >= 2 {
+        if failStreak >= (source == .zen ? 5 : 2) {
             status = "TRACK UNAVAILABLE"
             player.stop()
             playing = false
@@ -260,7 +280,12 @@ final class Model: ObservableObject {
             Log.write("giving up after \(failStreak) failures")
             return
         }
-        advance()
+        if source == .zen {
+            zen.markFailed()
+            advanceZen(skipped: false)
+        } else {
+            advance()
+        }
     }
 
     private func loadArtwork(_ track: Track) {
@@ -300,14 +325,28 @@ final class Model: ObservableObject {
         UserDefaults.standard.set(volume, forKey: "volume")
     }
 
-    func advance() {
+    func advance(skipped: Bool = false) {
+        if source == .zen {
+            advanceZen(skipped: skipped)
+            return
+        }
         guard !visible.isEmpty else { return }
         selected = (selected + 1) % visible.count
         Log.write("advance to index=\(selected) id=\(visible[selected].id)")
         play(visible[selected])
     }
 
+    func skip() {
+        advance(skipped: true)
+    }
+
     func goBack() {
+        if source == .zen {
+            if let track = zen.previous() {
+                play(track)
+            }
+            return
+        }
         guard !visible.isEmpty else { return }
         selected = (selected - 1 + visible.count) % visible.count
         Log.write("back to index=\(selected) id=\(visible[selected].id)")
@@ -317,6 +356,8 @@ final class Model: ObservableObject {
     func select(_ index: Int) {
         guard index < visible.count else { return }
         selected = index
+        source = view
+        cacheRetryID = nil
         Log.write("tap index=\(index) id=\(visible[index].id) view=\(view)")
         play(visible[index])
     }
@@ -332,67 +373,28 @@ final class Model: ObservableObject {
 
     func toggleLikeCurrent() {
         guard let track = current else { return }
-        toggleLike(track)
+        let liked = toggleLike(track)
+        if source == .zen {
+            zen.onLike(track, liked: liked)
+        }
     }
 
-    private func toggleLike(_ track: Track) {
-        if track.localURL != nil { return }
+    @discardableResult
+    private func toggleLike(_ track: Track) -> Bool {
+        let liked: Bool
         if let index = likes.firstIndex(where: { $0.id == track.id }) {
             likes.remove(at: index)
+            liked = false
         } else {
             likes.insert(StoredTrack(track), at: 0)
+            liked = true
         }
         Self.saveLikes(likes)
         if view == .likes {
             selected = min(selected, max(0, likes.count - 1))
         }
         Log.write("like id=\(track.id) total=\(likes.count)")
-    }
-
-    func importLocalFiles(_ urls: [URL]) {
-        let existing = uploaded
-        uploadActive = true
-        uploadDone = 0
-        uploadTotal = urls.count
-        uploadLabel = ""
-        Log.write("import local files: \(urls.count)")
-
-        // Keep access to the picked documents alive while the copy runs in background.
-        let scoped = urls.map { ($0, $0.startAccessingSecurityScopedResource()) }
-
-        Task.detached(priority: .userInitiated) { [weak self] in
-            let result = LocalLibrary.importFiles(urls, existing: existing) { done, total, name in
-                Task { @MainActor in
-                    guard let self else { return }
-                    self.uploadDone = done
-                    self.uploadTotal = total
-                    self.uploadLabel = name
-                }
-            }
-            for (url, access) in scoped where access {
-                url.stopAccessingSecurityScopedResource()
-            }
-            await MainActor.run {
-                guard let self else { return }
-                self.uploaded.append(contentsOf: result.added)
-                LocalLibrary.save(self.uploaded)
-                self.uploadActive = false
-                self.uploadLabel = ""
-                if result.added.isEmpty {
-                    self.status = result.skipped > 0
-                        ? "NOTHING ADDED (\(result.skipped) SKIPPED)"
-                        : "NOTHING ADDED"
-                } else {
-                    self.status = "ADDED \(result.added.count)"
-                }
-                Log.write(
-                    "import local done, added=\(result.added.count) skipped=\(result.skipped)"
-                )
-                if !result.added.isEmpty {
-                    self.setView(.uploaded)
-                }
-            }
-        }
+        return liked
     }
 
     func likesDocumentData() -> Data {
@@ -415,25 +417,164 @@ final class Model: ObservableObject {
         return added
     }
 
-    func deleteUploaded(_ track: Track) {
-        guard let local = uploaded.first(where: { $0.numericID == track.id }) else { return }
-        LocalLibrary.delete(local)
-        uploaded.removeAll { $0.id == local.id }
-        LocalLibrary.save(uploaded)
-        if current?.id == track.id {
-            player.stop()
-            playing = false
-            current = nil
-            updateNowPlaying()
-        }
-        status = "REMOVED"
-        Log.write("delete local \(local.id)")
-    }
-
     func clearCache() {
         cache.clear()
         cached = false
         status = "CACHE CLEARED"
+    }
+
+    // MARK: - ZEN
+
+    func zenToggle() {
+        if zen.loading { return }
+        if zen.active, zen.current != nil {
+            togglePlay()
+        } else {
+            zenStart()
+        }
+    }
+
+    func zenStart() {
+        guard !likes.isEmpty else {
+            status = "LIKE TRACKS FIRST"
+            return
+        }
+        zenTask?.cancel()
+        zenGeneration += 1
+        let generation = zenGeneration
+        zenWaiting = false
+        var fresh = ZenState()
+        fresh.beginLoading()
+        zen = fresh
+        status = "TUNING"
+
+        let starting = likes
+        zenTask = Task { [weak self] in
+            guard let self else { return }
+            let hydrated = await self.hydrateLikes(starting)
+            guard !Task.isCancelled else { return }
+            self.likes = hydrated
+            Self.saveLikes(hydrated)
+
+            let liked = hydrated.map(\.track)
+            var state = ZenState()
+            guard state.begin(likes: liked) else {
+                self.zen = ZenState()
+                self.status = "LIKE TRACKS FIRST"
+                return
+            }
+            state = await self.fillZen(state, likes: liked, rounds: 4)
+            guard !Task.isCancelled, self.zenGeneration == generation else { return }
+            guard let track = state.current else {
+                self.zen = ZenState()
+                self.status = "ZEN: NOTHING FOUND"
+                return
+            }
+            state.finishLoading()
+            self.zen = state
+            self.source = .zen
+            self.zenWaiting = false
+            self.play(track)
+            self.zenRefillIfNeeded()
+        }
+    }
+
+    private func hydrateLikes(_ items: [StoredTrack]) async -> [StoredTrack] {
+        let ids = items
+            .filter { ($0.genre ?? "").isEmpty && ($0.tags ?? "").isEmpty }
+            .map(\.id)
+        guard !ids.isEmpty, let full = try? await api.tracks(ids: ids) else {
+            return items
+        }
+        var byID = Dictionary(uniqueKeysWithValues: full.map { ($0.id, $0) })
+        return items.map { item in
+            guard let track = byID.removeValue(forKey: item.id) else { return item }
+            var copy = item
+            if (copy.genre ?? "").isEmpty { copy.genre = track.genre }
+            if (copy.tags ?? "").isEmpty { copy.tags = track.tags }
+            return copy
+        }
+    }
+
+    private func fillZen(_ start: ZenState, likes: [Track], rounds: Int) async -> ZenState {
+        var state = start
+        for _ in 0..<rounds {
+            if state.queue.count >= ZenState.queueTarget { break }
+            guard let genre = state.nextGenre() else { break }
+            let seeds = likes.filter {
+                Genre.bucket(genre: $0.genre, tags: $0.tags) == genre
+            }
+            var candidates: [Track] = []
+            for seed in seeds.prefix(2) {
+                if let tracks = try? await api.related(to: seed.id, limit: 20) {
+                    candidates += tracks
+                }
+            }
+            if genre != .other, let tracks = try? await api.search(genre.query, limit: 20) {
+                candidates += tracks
+            }
+            state.enqueue(candidates, target: genre)
+        }
+        if state.queue.isEmpty {
+            var candidates: [Track] = []
+            for seed in likes.prefix(3) {
+                if let tracks = try? await api.related(to: seed.id, limit: 20) {
+                    candidates += tracks
+                }
+            }
+            state.enqueue(candidates, target: .other)
+        }
+        return state
+    }
+
+    private func advanceZen(skipped: Bool) {
+        let next = skipped ? zen.skip() : zen.next()
+        if let track = next {
+            source = .zen
+            zenWaiting = false
+            play(track)
+            zenRefillIfNeeded()
+        } else {
+            zenWaiting = true
+            status = "TUNING"
+            zenRefillIfNeeded()
+        }
+    }
+
+    private func zenRefillIfNeeded() {
+        guard zen.active, !zen.loading, zen.needsRefill else { return }
+        var loading = zen
+        loading.beginLoading()
+        zen = loading
+        let generation = zenGeneration
+        let snapshot = zen
+        let tracks = likes.map(\.track)
+        zenTask = Task { [weak self] in
+            guard let self else { return }
+            var updated = await self.fillZen(snapshot, likes: tracks, rounds: 2)
+            updated.finishLoading()
+            guard !Task.isCancelled, self.zenGeneration == generation else { return }
+            self.zen.mergeQueue(updated)
+            if self.zenWaiting {
+                if let track = self.zen.next() {
+                    self.zenWaiting = false
+                    self.source = .zen
+                    self.play(track)
+                    self.zenRefillIfNeeded()
+                } else {
+                    self.zenWaiting = false
+                    self.zen = ZenState()
+                    self.status = "ZEN: NOTHING FOUND"
+                }
+            }
+        }
+    }
+
+    private static func removeLegacyLocalFiles() {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        for name in ["uploaded", "uploaded.json", "artwork"] {
+            try? FileManager.default.removeItem(at: docs.appendingPathComponent(name))
+        }
     }
 
     // MARK: - system integration
@@ -454,7 +595,7 @@ final class Model: ObservableObject {
             return .success
         }
         _ = center.nextTrackCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.advance() }
+            Task { @MainActor in self?.skip() }
             return .success
         }
         _ = center.previousTrackCommand.addTarget { [weak self] _ in

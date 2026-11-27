@@ -39,7 +39,7 @@ final class Cache {
         }
     }
 
-    private func fileExtension(for url: URL) -> String {
+    func fileExtension(for url: URL) -> String {
         guard let handle = try? FileHandle(forReadingFrom: url),
               let head = try? handle.read(upToCount: 16),
               head.count >= 8 else { return "m4a" }

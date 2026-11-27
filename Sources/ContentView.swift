@@ -22,7 +22,6 @@ struct ContentView: View {
     @EnvironmentObject private var model: Model
     @State private var dragFraction: Double?
     @State private var showNowPlaying = false
-    @State private var showAudioImporter = false
     @State private var showLikesImporter = false
     @State private var showLikesExporter = false
     @State private var likesDocument = LikesFile(data: Data())
@@ -34,24 +33,16 @@ struct ContentView: View {
             if model.view == .search {
                 searchField
             }
-            list
-            if model.uploadActive {
-                uploadProgress
+            if model.view == .zen {
+                zenView
+            } else {
+                list
             }
             playerBar
         }
         .background(bg.ignoresSafeArea())
         .foregroundColor(fg)
         .preferredColorScheme(.dark)
-        .fileImporter(
-            isPresented: $showAudioImporter,
-            allowedContentTypes: audioTypes,
-            allowsMultipleSelection: true
-        ) { result in
-            if case .success(let urls) = result {
-                model.importLocalFiles(urls)
-            }
-        }
         .fileImporter(isPresented: $showLikesImporter, allowedContentTypes: [.json]) { result in
             if case .success(let url) = result {
                 let access = url.startAccessingSecurityScopedResource()
@@ -74,28 +65,19 @@ struct ContentView: View {
         }
     }
 
-    private var audioTypes: [UTType] {
-        var types: [UTType] = [.audio, .mp3, .wav, .aiff]
-        for ext in ["flac", "m4a", "aac", "caf", "alac"] {
-            if let type = UTType(filenameExtension: ext) {
-                types.append(type)
-            }
-        }
-        return types
-    }
-
     private var header: some View {
         HStack(spacing: 10) {
             Text("VLSWM // PLAYER")
             Spacer()
             Text(model.hint).lineLimit(1)
             Menu {
-                Button("ADD LOCAL FILES") { showAudioImporter = true }
                 Button("EXPORT LIKES") {
                     likesDocument = LikesFile(data: model.likesDocumentData())
                     showLikesExporter = true
                 }
                 Button("IMPORT LIKES") { showLikesImporter = true }
+                Divider()
+                Button("CLEAR CACHE") { model.clearCache() }
             } label: {
                 VStack(spacing: 3) {
                     ForEach(0..<3) { _ in
@@ -113,9 +95,9 @@ struct ContentView: View {
 
     private var tabs: some View {
         HStack(spacing: 0) {
+            tab("ZEN", active: model.view == .zen) { model.setView(.zen) }
             tab("SEARCH", active: model.view == .search) { model.setView(.search) }
             tab("LIKES", active: model.view == .likes) { model.setView(.likes) }
-            tab("UPLOADED", active: model.view == .uploaded) { model.setView(.uploaded) }
             Spacer()
         }
         .padding(.horizontal, 12)
@@ -168,13 +150,8 @@ struct ContentView: View {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(model.visible.enumerated()), id: \.element.id) { index, track in
-                        SwipeRow(
-                            enabled: model.view == .uploaded,
-                            onDelete: { model.deleteUploaded(track) }
-                        ) {
-                            row(index: index, track: track)
-                        }
-                        .id(track.id)
+                        row(index: index, track: track)
+                            .id(track.id)
                     }
                 }
             }
@@ -186,6 +163,64 @@ struct ContentView: View {
                 }
             }
         }
+    }
+
+    private var zenView: some View {
+        VStack(spacing: 0) {
+            Text("ZEN")
+                .font(mono(54))
+                .padding(.top, 24)
+            Spacer()
+            Button {
+                model.zenToggle()
+            } label: {
+                Text(model.zen.loading ? "..." : (model.zen.active && model.playing ? "||" : "▶"))
+                    .font(mono(42))
+                    .frame(width: 120, height: 120)
+                    .background(model.zen.active ? fg : bg)
+                    .foregroundColor(model.zen.active ? bg : fg)
+                    .overlay(Rectangle().stroke(fg, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+
+            if model.zen.active {
+                VStack(spacing: 4) {
+                    Text(model.current?.title ?? "")
+                        .font(mono(15))
+                        .lineLimit(1)
+                    Text((model.current?.artist ?? "").uppercased())
+                        .font(mono(9))
+                        .lineLimit(1)
+                    Text(Genre.bucket(
+                        genre: model.current?.genre ?? "",
+                        tags: model.current?.tags ?? ""
+                    ).label)
+                    .font(mono(8))
+                }
+                .padding(.top, 16)
+                .padding(.horizontal, 12)
+
+                HStack(spacing: 8) {
+                    Text(timeText(model.position)).font(mono(9))
+                    bar(fraction: progressFraction) { fraction in
+                        model.seek(toFraction: fraction)
+                    }
+                    Text(timeText(model.duration)).font(mono(9))
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+            } else if model.likes.isEmpty {
+                Text("LIKE TRACKS FIRST")
+                    .font(mono(11))
+                    .padding(.top, 18)
+            } else {
+                Text("SOUNDCLOUD RADIO FROM YOUR LIKES")
+                    .font(mono(9))
+                    .padding(.top, 18)
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func row(index: Int, track: Track) -> some View {
@@ -210,19 +245,6 @@ struct ContentView: View {
             .foregroundColor(selected ? bg : fg)
         }
         .buttonStyle(.plain)
-    }
-
-    private var uploadProgress: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("UPLOADING \(model.uploadDone)/\(model.uploadTotal)  \(model.uploadLabel)")
-                .font(mono(8))
-                .lineLimit(1)
-            bar(fraction: model.uploadTotal > 0
-                ? Double(model.uploadDone) / Double(model.uploadTotal)
-                : 0) { _ in }
-        }
-        .padding(.horizontal, 12)
-        .padding(.top, 6)
     }
 
     private var playerBar: some View {
@@ -331,7 +353,7 @@ struct ContentView: View {
             control(likedCurrent ? "*" : "+") { model.toggleLikeCurrent() }
             control("|<") { model.goBack() }
             control(model.playing ? "||" : ">", filled: true) { model.togglePlay() }
-            control(">|") { model.advance() }
+            control(">|") { model.skip() }
         }
     }
 
@@ -350,65 +372,5 @@ struct ContentView: View {
                 .overlay(Rectangle().stroke(fg, lineWidth: 1))
         }
         .buttonStyle(.plain)
-    }
-}
-
-
-private struct SwipeRow<Content: View>: View {
-    let enabled: Bool
-    let onDelete: () -> Void
-    let content: Content
-
-    @State private var offset: CGFloat = 0
-
-    private let width: CGFloat = 92
-
-    init(enabled: Bool, onDelete: @escaping () -> Void, @ViewBuilder content: () -> Content) {
-        self.enabled = enabled
-        self.onDelete = onDelete
-        self.content = content()
-    }
-
-    var body: some View {
-        ZStack(alignment: .trailing) {
-            if enabled {
-                Button {
-                    offset = 0
-                    onDelete()
-                } label: {
-                    Text("DELETE")
-                        .font(.custom("JetBrainsMonoNF-Regular", size: 10))
-                        .foregroundColor(.white)
-                        .frame(width: width, height: 28)
-                        .background(Color.black)
-                        .overlay(Rectangle().stroke(Color.white, lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-                .opacity(offset < -2 ? 1 : 0)
-            }
-
-            Group {
-                if enabled {
-                    content
-                        .background(Color.black)
-                        .offset(x: offset)
-                        .simultaneousGesture(drag)
-                } else {
-                    content
-                }
-            }
-        }
-        .clipped()
-    }
-
-    private var drag: some Gesture {
-        DragGesture(minimumDistance: 10)
-            .onChanged { value in
-                guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                offset = min(0, max(-width, value.translation.width))
-            }
-            .onEnded { _ in
-                offset = offset < -width / 2 ? -width : 0
-            }
     }
 }

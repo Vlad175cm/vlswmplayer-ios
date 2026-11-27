@@ -34,6 +34,16 @@ jobs:
             CODE_SIGN_ENTITLEMENTS="" \
             build | tail -40
 
+      - name: Test
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project VLSWMPlayer.xcodeproj \
+            -scheme VLSWMPlayer \
+            -destination 'platform=iOS Simulator,OS=latest,name=iPhone 16' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO | tail -40
+
       - name: Package IPA
         run: |
           set -euo pipefail
