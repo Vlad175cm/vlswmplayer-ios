@@ -9,18 +9,6 @@ enum Genre: String, CaseIterable, Codable, Hashable {
     case pop
     case other
 
-    var label: String {
-        switch self {
-        case .hipHop: return "HIP-HOP"
-        case .electronic: return "ELECTRONIC"
-        case .hardstyle: return "HARDSTYLE"
-        case .ambient: return "AMBIENT"
-        case .rock: return "ROCK"
-        case .pop: return "POP"
-        case .other: return "OTHER"
-        }
-    }
-
     var query: String {
         switch self {
         case .hipHop: return "hip hop"

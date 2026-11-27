@@ -165,11 +165,10 @@ struct ContentView: View {
     }
 
     private var zenView: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 24) {
             Text("ZEN")
                 .font(mono(54))
-                .padding(.top, 24)
-            Spacer()
+
             Button {
                 model.zenToggle()
             } label: {
@@ -190,13 +189,7 @@ struct ContentView: View {
                     Text((model.current?.artist ?? "").uppercased())
                         .font(mono(9))
                         .lineLimit(1)
-                    Text(Genre.bucket(
-                        genre: model.current?.genre ?? "",
-                        tags: model.current?.tags ?? ""
-                    ).label)
-                    .font(mono(8))
                 }
-                .padding(.top, 16)
                 .padding(.horizontal, 12)
 
                 HStack(spacing: 8) {
@@ -207,17 +200,10 @@ struct ContentView: View {
                     Text(timeText(model.duration)).font(mono(9))
                 }
                 .padding(.horizontal, 12)
-                .padding(.top, 10)
             } else if model.likes.isEmpty {
                 Text("LIKE TRACKS FIRST")
                     .font(mono(11))
-                    .padding(.top, 18)
-            } else {
-                Text("SOUNDCLOUD RADIO FROM YOUR LIKES")
-                    .font(mono(9))
-                    .padding(.top, 18)
             }
-            Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

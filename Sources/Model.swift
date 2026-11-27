@@ -475,7 +475,10 @@ final class Model: ObservableObject {
                 self.status = "LIKE TRACKS FIRST"
                 return
             }
-            state = await self.fillZen(state, likes: liked, rounds: 4)
+            state = await self.fillZen(state, likes: liked, rounds: 1)
+            if state.queue.isEmpty {
+                state = await self.fillZen(state, likes: liked, rounds: 2)
+            }
             guard !Task.isCancelled, self.zenGeneration == generation else { return }
             guard let track = state.current else {
                 self.zen = ZenState()
@@ -516,22 +519,42 @@ final class Model: ObservableObject {
             let seeds = likes.filter {
                 Genre.bucket(genre: $0.genre, tags: $0.tags) == genre
             }
+            let seedIDs = seeds.prefix(2).map(\.id)
+            let genreQuery = genre.query
+            let api = self.api
             var candidates: [Track] = []
-            for seed in seeds.prefix(2) {
-                if let tracks = try? await api.related(to: seed.id, limit: 20) {
-                    candidates += tracks
+
+            // Related seeds and genre search are independent; run them
+            // together so the first track does not wait for a full chain.
+            await withTaskGroup(of: [Track].self) { group in
+                for id in seedIDs {
+                    group.addTask {
+                        (try? await api.related(to: id, limit: 20)) ?? []
+                    }
                 }
-            }
-            if genre != .other, let tracks = try? await api.search(genre.query, limit: 20) {
-                candidates += tracks
+                if genre != .other {
+                    group.addTask {
+                        (try? await api.search(genreQuery, limit: 20)) ?? []
+                    }
+                }
+                for await part in group {
+                    candidates += part
+                }
             }
             state.enqueue(candidates, target: genre)
         }
         if state.queue.isEmpty {
+            let ids = likes.prefix(3).map(\.id)
+            let api = self.api
             var candidates: [Track] = []
-            for seed in likes.prefix(3) {
-                if let tracks = try? await api.related(to: seed.id, limit: 20) {
-                    candidates += tracks
+            await withTaskGroup(of: [Track].self) { group in
+                for id in ids {
+                    group.addTask {
+                        (try? await api.related(to: id, limit: 20)) ?? []
+                    }
+                }
+                for await part in group {
+                    candidates += part
                 }
             }
             state.enqueue(candidates, target: .other)
