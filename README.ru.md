@@ -121,6 +121,13 @@ xcodebuild -project VLSWMPlayer.xcodeproj -scheme VLSWMPlayer \
   -sdk iphoneos -configuration Release CODE_SIGNING_ALLOWED=NO
 ```
 
+Тесты (симулятор):
+
+```bash
+xcodebuild test -project VLSWMPlayer.xcodeproj -scheme VLSWMPlayer \
+  -destination 'platform=iOS Simulator,name=iPhone 16' CODE_SIGNING_ALLOWED=NO
+```
+
 Упаковка:
 
 ```bash

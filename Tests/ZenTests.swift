@@ -128,4 +128,26 @@ final class ZenTests: XCTestCase {
         zen.onLike(track(7, artist: "x", genre: "Ambient"), liked: true)
         XCTAssertEqual(zen.weights[.ambient] ?? -1, 4)
     }
+
+    func testMergeKeepsPlayPosition() {
+        var zen = ZenState()
+        _ = zen.begin(likes: [track(99, artist: "seed", genre: "Trap")])
+        zen.enqueue([
+            track(1, artist: "a", genre: "Trap"),
+            track(2, artist: "b", genre: "Trap"),
+            track(3, artist: "c", genre: "Trap")
+        ], target: .hipHop)
+        XCTAssertEqual(zen.next()?.id, 2)
+
+        var refreshed = zen
+        refreshed.enqueue([
+            track(4, artist: "d", genre: "Trap"),
+            track(5, artist: "e", genre: "Trap")
+        ], target: .hipHop)
+        zen.mergeQueue(refreshed)
+
+        XCTAssertEqual(zen.index, 1)
+        XCTAssertEqual(zen.current?.id, 2)
+        XCTAssertGreaterThanOrEqual(zen.queue.count, 5)
+    }
 }

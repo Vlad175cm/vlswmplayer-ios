@@ -45,6 +45,7 @@ final class Model: ObservableObject {
     private var resumeAfterInterruption = false
     private var cacheRetryID: Int?
     private var zenWaiting = false
+    private var zenRefilling = false
     private var zenGeneration = 0
 
     init() {
@@ -443,6 +444,7 @@ final class Model: ObservableObject {
         zenGeneration += 1
         let generation = zenGeneration
         zenWaiting = false
+        zenRefilling = false
         var fresh = ZenState()
         fresh.beginLoading()
         zen = fresh
@@ -528,7 +530,12 @@ final class Model: ObservableObject {
     }
 
     private func advanceZen(skipped: Bool) {
-        let next = skipped ? zen.skip() : zen.next()
+        let next: Track?
+        if skipped {
+            next = zen.skip()
+        } else {
+            next = zen.next()
+        }
         if let track = next {
             source = .zen
             zenWaiting = false
@@ -542,10 +549,8 @@ final class Model: ObservableObject {
     }
 
     private func zenRefillIfNeeded() {
-        guard zen.active, !zen.loading, zen.needsRefill else { return }
-        var loading = zen
-        loading.beginLoading()
-        zen = loading
+        guard zen.active, !zen.loading, !zenRefilling, zen.needsRefill else { return }
+        zenRefilling = true
         let generation = zenGeneration
         let snapshot = zen
         let tracks = likes.map(\.track)
@@ -554,6 +559,7 @@ final class Model: ObservableObject {
             var updated = await self.fillZen(snapshot, likes: tracks, rounds: 2)
             updated.finishLoading()
             guard !Task.isCancelled, self.zenGeneration == generation else { return }
+            self.zenRefilling = false
             self.zen.mergeQueue(updated)
             if self.zenWaiting {
                 if let track = self.zen.next() {
