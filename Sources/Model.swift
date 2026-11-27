@@ -180,6 +180,7 @@ final class Model: ObservableObject {
 
     func playSelected() {
         guard selected < visible.count else { return }
+        resetZenIfNeeded()
         source = view
         cacheRetryID = nil
         play(visible[selected])
@@ -356,11 +357,20 @@ final class Model: ObservableObject {
 
     func select(_ index: Int) {
         guard index < visible.count else { return }
+        resetZenIfNeeded()
         selected = index
         source = view
         cacheRetryID = nil
         Log.write("tap index=\(index) id=\(visible[index].id) view=\(view)")
         play(visible[index])
+    }
+
+    private func resetZenIfNeeded() {
+        guard view != .zen else { return }
+        zenGeneration += 1
+        zenWaiting = false
+        zenRefilling = false
+        zen = ZenState()
     }
 
     func isLiked(_ id: Int) -> Bool {
